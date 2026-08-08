@@ -1446,10 +1446,52 @@ try:
 
       st.dataframe(franchise_df, use_container_width=True, height=300)
     with sub_tab2:
-      st.dataframe(awards_df, use_container_width=True, height=300)
+      if {"Title", "Nominations"}.issubset(awards_df.columns):
+        nominated = awards_df[
+            pd.to_numeric(awards_df["Nominations"], errors="coerce").fillna(0) > 0
+        ].copy()
+        nominated["Wins"] = pd.to_numeric(nominated.get("Wins", 0), errors="coerce").fillna(0).astype(int)
+        nominated["Nominations"] = pd.to_numeric(nominated["Nominations"], errors="coerce").fillna(0).astype(int)
+        nominated = nominated.sort_values(by=["Wins", "Nominations"], ascending=False)
+
+        if nominated.empty:
+          st.info("None of your films show any Oscar nominations in this sheet.")
+        else:
+          st.caption(f"{len(nominated)} films with at least one Oscar nomination.")
+          for _, arow in nominated.iterrows():
+            title = arow.get("Title", "Unknown")
+            year_str = safe_year(arow.get("Year", ""))
+            wins = int(arow.get("Wins", 0))
+            noms = int(arow.get("Nominations", 0))
+            categories = arow.get("Winning Categories") if wins > 0 else arow.get("All Nominated Categories")
+            categories = categories if pd.notna(categories) else ""
+
+            if wins > 0:
+              headline = f"🏆 **{title}** ({year_str}) — {wins} win{'s' if wins != 1 else ''}, {noms} nomination{'s' if noms != 1 else ''}"
+            else:
+              headline = f"🎖️ **{title}** ({year_str}) — {noms} nomination{'s' if noms != 1 else ''}"
+            st.markdown(headline)
+            if categories:
+              st.caption(categories)
+      else:
+        st.dataframe(awards_df, use_container_width=True, height=300)
     with sub_tab3:
-      st.caption("Your score plus external ratings (IMDb, RT, Letterboxd, Metacritic, TMDb).")
-      st.dataframe(ratings_df, use_container_width=True, height=300)
+      if "Rating (1-5)" in valid_collection.columns:
+        rated = valid_collection.copy()
+        rated["_stars"] = rated["Rating (1-5)"].apply(stars_to_number)
+        rated = rated[rated["_stars"].notna()].sort_values(by="_stars", ascending=False)
+
+        if rated.empty:
+          st.info("No films rated yet — rate some from the Update tab and they'll show up here.")
+        else:
+          st.caption(f"{len(rated)} rated film{'s' if len(rated) != 1 else ''}, highest first.")
+          for _, rrow in rated.iterrows():
+            title = rrow.get("Title", "Unknown")
+            year_str = safe_year(rrow.get("Year", ""))
+            stars = rating_stars_display(rrow.get("Rating (1-5)"))
+            st.markdown(f"{stars} — **{title}** ({year_str})")
+      else:
+        st.dataframe(ratings_df, use_container_width=True, height=300)
 
   # --- TAB 7: ON THIS DAY ---
   with app_mode[6]:
