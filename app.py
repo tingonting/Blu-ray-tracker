@@ -365,6 +365,38 @@ def tmdb_recommendations_cached(movie_id):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
+def tmdb_trailer_cached(movie_id):
+  """YouTube video key for the film's trailer, or None. Prefers an official
+  Trailer, falls back to any Trailer, then a Teaser -- returns None rather
+  than a mismatched clip if nothing suitable is found."""
+  if requests is None or not tmdb_configured():
+    return None
+  try:
+    api_key = st.secrets["tmdb"]["api_key"]
+    resp = requests.get(
+        f"https://api.themoviedb.org/3/movie/{movie_id}/videos",
+        params={"api_key": api_key},
+        timeout=8,
+    )
+    results = [v for v in resp.json().get("results", []) if v.get("site") == "YouTube"]
+
+    official_trailer = next((v for v in results if v.get("type") == "Trailer" and v.get("official")), None)
+    if official_trailer:
+      return official_trailer["key"]
+
+    any_trailer = next((v for v in results if v.get("type") == "Trailer"), None)
+    if any_trailer:
+      return any_trailer["key"]
+
+    teaser = next((v for v in results if v.get("type") == "Teaser"), None)
+    if teaser:
+      return teaser["key"]
+  except Exception:
+    pass
+  return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def tmdb_release_date_cached(title, year=None, region="GB"):
   """Used by 'On This Day' -- finds the film via search, then pulls the
   actual UK release date from TMDb's per-country release_dates endpoint
@@ -1181,6 +1213,7 @@ try:
         p_last_watched_html = f"<br><b>Last watched:</b> {p_date_watched}" if p_date_watched else ""
 
         p_plot_html = ""
+        p_trailer_key = None
         if tmdb_configured():
           tmdb_pick_data = tmdb_lookup_cached(p_title, picked_movie.get("Year"))
           if tmdb_pick_data and tmdb_pick_data.get("plot"):
@@ -1188,6 +1221,8 @@ try:
                 f'<p style="font-size: 0.85em; margin-top: 10px; opacity: 0.75; '
                 f'font-style: italic;">{tmdb_pick_data["plot"]}</p>'
             )
+          if tmdb_pick_data and tmdb_pick_data.get("id"):
+            p_trailer_key = tmdb_trailer_cached(tmdb_pick_data["id"])
 
         st.markdown(
             f"""
@@ -1204,6 +1239,9 @@ try:
                 """,
             unsafe_allow_html=True,
         )
+
+        if p_trailer_key:
+          st.link_button("▶️ Watch Trailer", f"https://www.youtube.com/watch?v={p_trailer_key}")
 
         with st.form(f"quick_picker_update_form_{p_id}"):
           st.markdown(f"**Quick Update — {p_title}:**")
