@@ -2,6 +2,7 @@ import random
 import re
 import urllib.parse
 import datetime
+import concurrent.futures
 import openpyxl
 import pandas as pd
 import streamlit as st
@@ -270,6 +271,84 @@ def github_sync_configured():
     return False
 
 
+def tmdb_configured():
+  """True if a free TMDb API key has been added to secrets. TMDb powers
+  auto-fill on Add and the plot line on Tonight's Pick -- everything using
+  it degrades gracefully to 'not shown' when this is False."""
+  try:
+    return "tmdb" in st.secrets and "api_key" in st.secrets["tmdb"]
+  except Exception:
+    return False
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def tmdb_lookup_cached(title, year=None):
+  """Searches TMDb for a title and pulls genre/director/runtime/plot/release
+  year. Cached for an hour since this data barely changes. Returns None on
+  any failure or no-match -- always safe to fall back to manual entry."""
+  if requests is None or not tmdb_configured():
+    return None
+  try:
+    api_key = st.secrets["tmdb"]["api_key"]
+    params = {"api_key": api_key, "query": title}
+    if year:
+      params["year"] = int(year)
+    search_resp = requests.get(
+        "https://api.themoviedb.org/3/search/movie", params=params, timeout=8
+    )
+    results = search_resp.json().get("results", [])
+    if not results:
+      return None
+
+    movie_id = results[0]["id"]
+    detail_resp = requests.get(
+        f"https://api.themoviedb.org/3/movie/{movie_id}",
+        params={"api_key": api_key, "append_to_response": "credits"},
+        timeout=8,
+    )
+    detail = detail_resp.json()
+
+    genres = ", ".join(g["name"] for g in detail.get("genres", []))
+    crew = detail.get("credits", {}).get("crew", [])
+    director = next((c["name"] for c in crew if c.get("job") == "Director"), "")
+    release_date = detail.get("release_date", "") or ""
+    release_year = int(release_date[:4]) if release_date[:4].isdigit() else None
+
+    return {
+        "genre": genres,
+        "director": director,
+        "runtime": detail.get("runtime"),
+        "plot": detail.get("overview", ""),
+        "year": release_year,
+        "release_date": release_date,
+    }
+  except Exception:
+    return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def tmdb_release_date_cached(title, year=None):
+  """Lighter-weight lookup used only for 'On This Day' -- just the search
+  call, no detail fetch, since only the release_date field is needed.
+  Cached for a day since a whole-collection scan is comparatively expensive."""
+  if requests is None or not tmdb_configured():
+    return None
+  try:
+    api_key = st.secrets["tmdb"]["api_key"]
+    params = {"api_key": api_key, "query": title}
+    if year:
+      params["year"] = int(year)
+    resp = requests.get(
+        "https://api.themoviedb.org/3/search/movie", params=params, timeout=8
+    )
+    results = resp.json().get("results", [])
+    if results:
+      return results[0].get("release_date") or None
+  except Exception:
+    pass
+  return None
+
+
 def sync_to_github(filepath):
   """Commits the workbook back to your GitHub repo so edits survive a
   Streamlit Cloud restart or redeploy -- the container's own disk isn't
@@ -343,6 +422,19 @@ def decode_barcode(image_bytes):
   except Exception:
     pass
   return None
+
+
+def clean_title_for_search(title):
+  """Strips retailer-catalog junk like '(Blu-ray Disc)' or '[4K UHD Steelbook]'
+  off a title before using it as a search query -- UPC product titles are
+  full of this and it breaks a TMDb match otherwise."""
+  cleaned = re.sub(
+      r"[\(\[][^\)\]]*?(blu-?ray|dvd|4k|uhd|disc|steelbook|edition|region\s?[a-z0-9]+)[^\)\]]*?[\)\]]",
+      "",
+      title,
+      flags=re.IGNORECASE,
+  )
+  return cleaned.strip(" -–—")
 
 
 def lookup_barcode(code):
@@ -706,6 +798,7 @@ try:
       "🛒 Wishlist",
       "📊 Stats",
       "🏆 Extras",
+      "📅 On This Day",
   ])
 
   # --- TAB 1: HOME & RANDOM PICKER ---
@@ -797,6 +890,15 @@ try:
         p_watched = watched_display(p_watched_raw)
         p_rating_display = rating_stars_display(picked_movie.get("Rating (1-5)"))
 
+        p_plot_html = ""
+        if tmdb_configured():
+          tmdb_pick_data = tmdb_lookup_cached(p_title, picked_movie.get("Year"))
+          if tmdb_pick_data and tmdb_pick_data.get("plot"):
+            p_plot_html = (
+                f'<p style="font-size: 0.85em; margin-top: 10px; opacity: 0.75; '
+                f'font-style: italic;">{tmdb_pick_data["plot"]}</p>'
+            )
+
         st.markdown(
             f"""
                 <div class="winner-box">
@@ -807,6 +909,7 @@ try:
                         <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
                         <b>Rating:</b> {p_rating_display}
                     </p>
+                    {p_plot_html}
                 </div>
                 """,
             unsafe_allow_html=True,
@@ -953,30 +1056,68 @@ try:
     add_tab1, add_tab2 = st.tabs(["Type it in", "📷 Scan barcode"])
 
     with add_tab1:
+      st.markdown("**1. Title & year**")
+      mcol1, mcol2 = st.columns([2, 1])
+      with mcol1:
+        manual_title = st.text_input("Title *", key="manual_title_input")
+      with mcol2:
+        manual_year = st.number_input(
+            "Year", min_value=1900, max_value=2100,
+            value=datetime.date.today().year, step=1, key="manual_year_input",
+        )
+
+      if tmdb_configured():
+        if st.button("🔎 Look up on TMDb", key="manual_tmdb_btn"):
+          if manual_title:
+            result = tmdb_lookup_cached(manual_title, manual_year)
+            st.session_state["manual_tmdb_result"] = result
+            if not result:
+              st.warning("No TMDb match — you can still fill in the details manually below.")
+          else:
+            st.warning("Enter a title first.")
+      else:
+        st.caption("Add a free TMDb API key to auto-fill genre, director, runtime, and plot here.")
+
+      tmdb_prefill = st.session_state.get("manual_tmdb_result")
+      if tmdb_prefill:
+        st.success(
+            f"Found on TMDb: {tmdb_prefill.get('genre') or '—'} · "
+            f"dir. {tmdb_prefill.get('director') or '—'} · "
+            f"{tmdb_prefill.get('runtime') or '—'} min"
+        )
+
+      st.markdown("**2. Confirm & add**")
       with st.form("manual_add_form", clear_on_submit=True):
-        m_title = st.text_input("Title *")
-        mcol1, mcol2 = st.columns(2)
-        with mcol1:
-          m_year = st.number_input("Year", min_value=1900, max_value=2100, value=2020, step=1)
-        with mcol2:
+        mcol3, mcol4 = st.columns(2)
+        with mcol3:
           m_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"])
-        m_genre = st.text_input("Genre (optional)")
-        m_director = st.text_input("Director (optional)")
-        m_notes = st.text_input("Notes (optional)")
+        with mcol4:
+          m_runtime = st.number_input(
+              "Runtime (min)", min_value=0, max_value=600,
+              value=int(tmdb_prefill.get("runtime") or 0) if tmdb_prefill else 0,
+              step=1,
+          )
+        m_genre = st.text_input("Genre", value=(tmdb_prefill.get("genre", "") if tmdb_prefill else ""))
+        m_director = st.text_input("Director", value=(tmdb_prefill.get("director", "") if tmdb_prefill else ""))
+        m_notes = st.text_area(
+            "Notes / Plot", value=(tmdb_prefill.get("plot", "") if tmdb_prefill else ""), height=80,
+        )
 
         if st.form_submit_button("💾 Add to Collection"):
-          if m_title:
+          if manual_title:
             add_to_collection({
-                "Title": m_title,
-                "Year": m_year,
+                "Title": manual_title,
+                "Year": manual_year,
                 "Format": m_format,
                 "Genre": m_genre,
                 "Director": m_director,
+                "Runtime (min)": m_runtime if m_runtime else None,
                 "Notes": m_notes,
                 "Watched": "No",
             })
+            st.session_state.pop("manual_tmdb_result", None)
             st.cache_data.clear()
-            st.success(f"Added '{m_title}' to your collection!")
+            st.success(f"Added '{manual_title}' to your collection!")
             st.rerun()
           else:
             st.warning("Title is required.")
@@ -1001,19 +1142,34 @@ try:
           st.error("Couldn't read a barcode in that photo — try again with the barcode closer and well-lit.")
         else:
           st.info(f"Barcode: {decoded_code}")
-          lookup_result = lookup_barcode(decoded_code)
+          upc_result = lookup_barcode(decoded_code)
+
+          prefill_title = clean_title_for_search(upc_result.get("title", "")) if upc_result else ""
+          prefill_year = upc_result.get("year") if upc_result else None
+
+          # Chain a TMDb lookup off the (cleaned) UPC title to also pull
+          # genre/director/runtime/plot, and a more reliable year if TMDb
+          # has one -- the UPC database frequently doesn't.
+          tmdb_result = None
+          if prefill_title and tmdb_configured():
+            tmdb_result = tmdb_lookup_cached(prefill_title, prefill_year)
+            if tmdb_result and tmdb_result.get("year"):
+              prefill_year = tmdb_result["year"]
 
           with st.form("barcode_add_form"):
-            prefill_title = lookup_result.get("title", "") if lookup_result else ""
-            prefill_year = lookup_result.get("year") if lookup_result else None
-
-            if lookup_result:
+            if upc_result:
               st.success("Found a match online — check it's right before adding:")
             else:
               st.warning("No online match for this barcode — enter the details manually.")
 
-            if lookup_result and not prefill_year:
-              st.caption("⚠️ This barcode database doesn't include a release year — please fill it in.")
+            if upc_result and not prefill_year:
+              st.caption("⚠️ Couldn't confirm a release year — please check it.")
+            if tmdb_result:
+              st.caption(
+                  f"TMDb: {tmdb_result.get('genre') or '—'} · "
+                  f"dir. {tmdb_result.get('director') or '—'} · "
+                  f"{tmdb_result.get('runtime') or '—'} min"
+              )
 
             b_title = st.text_input("Title *", value=prefill_title)
             bcol1, bcol2 = st.columns(2)
@@ -1028,7 +1184,16 @@ try:
               )
             with bcol2:
               b_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"], key="b_format")
-            b_notes = st.text_input("Notes (optional)", value=(f"Barcode: {decoded_code}"))
+            b_genre = st.text_input("Genre", value=(tmdb_result.get("genre", "") if tmdb_result else ""))
+            b_director = st.text_input("Director", value=(tmdb_result.get("director", "") if tmdb_result else ""))
+            b_runtime = st.number_input(
+                "Runtime (min)", min_value=0, max_value=600,
+                value=int(tmdb_result.get("runtime") or 0) if tmdb_result else 0, step=1,
+            )
+            default_notes = f"Barcode: {decoded_code}"
+            if tmdb_result and tmdb_result.get("plot"):
+              default_notes = f"{tmdb_result['plot']}\n\nBarcode: {decoded_code}"
+            b_notes = st.text_area("Notes / Plot", value=default_notes, height=80)
 
             if st.form_submit_button("💾 Add to Collection"):
               if b_title:
@@ -1036,6 +1201,9 @@ try:
                     "Title": b_title,
                     "Year": b_year,
                     "Format": b_format,
+                    "Genre": b_genre,
+                    "Director": b_director,
+                    "Runtime (min)": b_runtime if b_runtime else None,
                     "Notes": b_notes,
                     "Watched": "No",
                 })
@@ -1282,6 +1450,50 @@ try:
     with sub_tab3:
       st.caption("Your score plus external ratings (IMDb, RT, Letterboxd, Metacritic, TMDb).")
       st.dataframe(ratings_df, use_container_width=True, height=300)
+
+  # --- TAB 7: ON THIS DAY ---
+  with app_mode[6]:
+    st.subheader("📅 On This Day")
+    today = datetime.date.today()
+    st.caption(f"Films in your collection first released on {today.strftime('%B %d')}, across the years.")
+
+    if not tmdb_configured():
+      st.info(
+          "This needs a free TMDb API key in your app's secrets "
+          "(the same [tmdb] section used for auto-fill on Add) — "
+          "see the Extras tab caption for the general secrets pattern."
+      )
+    else:
+      with st.spinner("Checking release dates across your collection — cached after the first time, so this gets fast."):
+        titles_years = [
+            (row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
+            for _, row in valid_collection.iterrows()
+            if row.get("Title")
+        ]
+
+        def _check(title_year):
+          title, year = title_year
+          release_date = tmdb_release_date_cached(title, year)
+          if not release_date:
+            return None
+          try:
+            d = datetime.datetime.strptime(release_date, "%Y-%m-%d").date()
+          except ValueError:
+            return None
+          if d.month == today.month and d.day == today.day:
+            return (title, d.year)
+          return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+          results = list(executor.map(_check, titles_years))
+
+      matches = sorted((r for r in results if r), key=lambda x: x[1])
+
+      if matches:
+        for title, rel_year in matches:
+          st.markdown(f"🎬 **{title}** — released {today.strftime('%B %d')}, {rel_year}")
+      else:
+        st.info("Nothing in your collection was first released on this date — check back tomorrow!")
 
 except FileNotFoundError:
   st.error(
