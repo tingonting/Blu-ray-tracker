@@ -1078,7 +1078,6 @@ try:
   valid_wishlist = wishlist_df.dropna(subset=["Title"]).copy()
   total_collection = len(valid_collection)
   total_wishlist = len(valid_wishlist)
-  total_directors = len(directors_df.dropna(subset=["Director"]))
 
   # Detect an optional price/cost column so the value stat only shows if it exists
   price_col = next(
@@ -1124,23 +1123,63 @@ try:
   # --- TAB 1: HOME & RANDOM PICKER ---
   with app_mode[0]:
     st.markdown("### 📊 Library Stats")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-      st.metric(label="Owned", value=total_collection)
-    with col2:
-      st.metric(label="Wishlist", value=total_wishlist)
-    with col3:
-      st.metric(label="Directors", value=total_directors)
+
+    watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
+    unwatched_count = total_collection - watched_count
+
+    stat_cols_row1 = st.columns(2)
+    with stat_cols_row1[0]:
+      if st.button(f"🎬  **{total_collection}**  \nOwned", key="stat_owned", use_container_width=True):
+        st.session_state["home_stat_view"] = "owned"
+    with stat_cols_row1[1]:
+      if st.button(f"🛒  **{total_wishlist}**  \nWishlist", key="stat_wishlist", use_container_width=True):
+        st.session_state["home_stat_view"] = "wishlist"
+
+    stat_cols_row2 = st.columns(2)
+    with stat_cols_row2[0]:
+      if st.button(f"✅  **{watched_count}**  \nWatched", key="stat_watched", use_container_width=True):
+        st.session_state["home_stat_view"] = "watched"
+    with stat_cols_row2[1]:
+      if st.button(f"⬜  **{unwatched_count}**  \nUnwatched", key="stat_unwatched", use_container_width=True):
+        st.session_state["home_stat_view"] = "unwatched"
 
     if price_col:
       total_value = pd.to_numeric(
           valid_collection[price_col], errors="coerce"
       ).sum()
       st.markdown(
-          f"<p style='text-align: center; color: gray; margin-top: -8px;'>"
+          f"<p style='text-align: center; color: gray; margin-top: 4px;'>"
           f"💰 Estimated collection value: <b>£{total_value:,.2f}</b></p>",
           unsafe_allow_html=True,
       )
+
+    active_stat_view = st.session_state.get("home_stat_view")
+    if active_stat_view:
+      view_titles = {
+          "owned": f"🎬 All {total_collection} owned films",
+          "wishlist": f"🛒 All {total_wishlist} wishlist films",
+          "watched": f"✅ {watched_count} watched films",
+          "unwatched": f"⬜ {unwatched_count} unwatched films",
+      }
+      hcol1, hcol2 = st.columns([4, 1])
+      with hcol1:
+        st.markdown(f"**{view_titles[active_stat_view]}**")
+      with hcol2:
+        if st.button("✕ Close", key="close_stat_view"):
+          st.session_state.pop("home_stat_view", None)
+          st.rerun()
+
+      if active_stat_view == "owned":
+        st.dataframe(style_format_column(curated_browse_view(valid_collection)), use_container_width=True, hide_index=True)
+      elif active_stat_view == "wishlist":
+        wishlist_cols = [c for c in ["Title", "Priority (1-5)", "Target Price (£)"] if c in valid_wishlist.columns]
+        st.dataframe(valid_wishlist[wishlist_cols], use_container_width=True, hide_index=True)
+      elif active_stat_view == "watched" and "Watched" in valid_collection.columns:
+        watched_films = valid_collection[valid_collection["Watched"].apply(is_watched)]
+        st.dataframe(style_format_column(curated_browse_view(watched_films)), use_container_width=True, hide_index=True)
+      elif active_stat_view == "unwatched" and "Watched" in valid_collection.columns:
+        unwatched_films = valid_collection[~valid_collection["Watched"].apply(is_watched)]
+        st.dataframe(style_format_column(curated_browse_view(unwatched_films)), use_container_width=True, hide_index=True)
 
     film_divider()
     st.markdown("### 🎲 Movie Night Decider")
