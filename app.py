@@ -308,6 +308,25 @@ def rating_stars_display(rating_val):
     return "Not rated yet"
 
 
+def curated_browse_view(df):
+  """A phone-friendly slice of the collection: just the columns someone
+  browsing would actually want to see, with clean values -- not the full
+  26-column spreadsheet."""
+  wanted_cols = ["Title", "Year", "Format", "Watched", "Rating (1-5)"]
+  cols_present = [c for c in wanted_cols if c in df.columns]
+  view = df[cols_present].copy()
+
+  if "Year" in view.columns:
+    view["Year"] = view["Year"].apply(safe_year)
+  if "Watched" in view.columns:
+    view["Watched"] = view["Watched"].apply(watched_display)
+  if "Rating (1-5)" in view.columns:
+    view["Rating (1-5)"] = view["Rating (1-5)"].apply(rating_stars_display)
+    view = view.rename(columns={"Rating (1-5)": "Rating"})
+
+  return view.reset_index(drop=True)
+
+
 def find_row_by_id(sheet, id_column, target_id, header_row=4):
   """Scan a sheet for the row whose id_column matches target_id."""
   for r in range(header_row, sheet.max_row + 1):
@@ -612,7 +631,7 @@ try:
         )
       results = collection_df[mask]
       st.success(f"Found {len(results)} matches:")
-      st.dataframe(results, use_container_width=True)
+      st.dataframe(curated_browse_view(results), use_container_width=True, hide_index=True)
     else:
       st.info("Type a keyword above to find a film.")
 
@@ -677,7 +696,13 @@ try:
             st.error("Couldn't find that film in the sheet to update.")
 
     film_divider()
-    st.dataframe(collection_df, use_container_width=True, height=350)
+    st.markdown("**Your collection**")
+    st.dataframe(
+        curated_browse_view(valid_collection),
+        use_container_width=True,
+        height=350,
+        hide_index=True,
+    )
 
   # --- TAB 4: WISHLIST ---
   with app_mode[3]:
