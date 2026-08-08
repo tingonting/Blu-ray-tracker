@@ -311,6 +311,9 @@ def tmdb_lookup_cached(title, year=None):
     genres = ", ".join(g["name"] for g in detail.get("genres", []))
     crew = detail.get("credits", {}).get("crew", [])
     director = next((c["name"] for c in crew if c.get("job") == "Director"), "")
+    cast = detail.get("credits", {}).get("cast", [])
+    cast_sorted = sorted(cast, key=lambda c: c.get("order", 999))
+    top_cast = [c["name"] for c in cast_sorted[:5] if c.get("name")]
     release_date = detail.get("release_date", "") or ""
     release_year = int(release_date[:4]) if release_date[:4].isdigit() else None
 
@@ -318,6 +321,7 @@ def tmdb_lookup_cached(title, year=None):
         "id": movie_id,
         "genre": genres,
         "director": director,
+        "cast": top_cast,
         "runtime": detail.get("runtime"),
         "plot": detail.get("overview", ""),
         "year": release_year,
@@ -615,10 +619,15 @@ def rating_stars_display(rating_val):
 def curated_browse_view(df):
   """A phone-friendly slice of the collection: just the columns someone
   browsing would actually want to see, with clean values -- not the full
-  26-column spreadsheet."""
+  26-column spreadsheet. Always sorted alphabetically by Title, since Film
+  ID is really just an add-order number, not a Title order -- newly added
+  films should show up in their alphabetical place, not at the bottom."""
   wanted_cols = ["Title", "Year", "Format", "Watched", "Rating (1-5)", "Date Watched"]
   cols_present = [c for c in wanted_cols if c in df.columns]
   view = df[cols_present].copy()
+
+  if "Title" in view.columns:
+    view = view.sort_values(by="Title", key=lambda s: s.str.lower())
 
   if "Year" in view.columns:
     view["Year"] = view["Year"].apply(safe_year)
@@ -700,6 +709,13 @@ def format_date_watched(value):
     return pd.to_datetime(value).strftime("%d/%m/%Y")
   except Exception:
     return str(value)
+
+
+def cast_fields_from_string(cast_text):
+  """Splits a comma-joined cast string into the Actor 1..Actor 5 columns
+  the sheet actually uses. Extra names beyond 5 are dropped."""
+  names = [n.strip() for n in cast_text.split(",") if n.strip()][:5]
+  return {f"Actor {i + 1}": name for i, name in enumerate(names)}
 
 
 def add_to_collection(fields):
@@ -1089,7 +1105,7 @@ try:
   with app_mode[2]:
     st.subheader("📚 Update Status & Rating")
 
-    valid_collection_sorted = valid_collection.sort_values(by="Film ID")
+    valid_collection_sorted = valid_collection.sort_values(by="Title", key=lambda s: s.str.lower())
 
     # Build a label -> Film ID map so selection never depends on re-parsing text
     option_to_id = {}
@@ -1210,6 +1226,10 @@ try:
           )
         m_genre = st.text_input("Genre", value=(tmdb_prefill.get("genre", "") if tmdb_prefill else ""))
         m_director = st.text_input("Director", value=(tmdb_prefill.get("director", "") if tmdb_prefill else ""))
+        m_cast = st.text_input(
+            "Cast (comma-separated, top 5)",
+            value=(", ".join(tmdb_prefill.get("cast", [])) if tmdb_prefill else ""),
+        )
         m_notes = st.text_area(
             "Notes / Plot", value=(tmdb_prefill.get("plot", "") if tmdb_prefill else ""), height=80,
         )
@@ -1225,6 +1245,7 @@ try:
                 "Runtime (min)": m_runtime if m_runtime else None,
                 "Notes": m_notes,
                 "Watched": "No",
+                **cast_fields_from_string(m_cast),
             })
             st.session_state.pop("manual_tmdb_result", None)
             st.cache_data.clear()
@@ -1297,6 +1318,10 @@ try:
               b_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"], key="b_format")
             b_genre = st.text_input("Genre", value=(tmdb_result.get("genre", "") if tmdb_result else ""))
             b_director = st.text_input("Director", value=(tmdb_result.get("director", "") if tmdb_result else ""))
+            b_cast = st.text_input(
+                "Cast (comma-separated, top 5)",
+                value=(", ".join(tmdb_result.get("cast", [])) if tmdb_result else ""),
+            )
             b_runtime = st.number_input(
                 "Runtime (min)", min_value=0, max_value=600,
                 value=int(tmdb_result.get("runtime") or 0) if tmdb_result else 0, step=1,
@@ -1317,6 +1342,7 @@ try:
                     "Runtime (min)": b_runtime if b_runtime else None,
                     "Notes": b_notes,
                     "Watched": "No",
+                    **cast_fields_from_string(b_cast),
                 })
                 st.cache_data.clear()
                 st.success(f"Added '{b_title}' to your collection!")
