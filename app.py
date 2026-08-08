@@ -1,12 +1,14 @@
 import random
+import re
 import urllib.parse
+import datetime
 import openpyxl
 import pandas as pd
 import streamlit as st
 
 # Set up page configuration & layout
 st.set_page_config(
-    page_title="Conor's Blu-ray Hub", page_icon="🎬", layout="centered"
+    page_title="Conor's Blu-ray Hub", page_icon="🎬", layout="wide"
 )
 
 # Custom styling — "Blu-ray Hub" theme
@@ -27,10 +29,23 @@ st.markdown(
         --mute: #8B889E;
     }
 
-    /* Main container and background styling */
-    .stApp {
+    /* Content width — narrow on phones (unchanged from before), progressively
+       roomier on iPad and desktop instead of sitting in a fixed 600px column
+       with dead space on either side. layout="wide" above removes Streamlit's
+       own centered-mode cap so this is the only width rule in play. */
+    .block-container {
         max-width: 600px;
         margin: 0 auto;
+        padding-top: 2rem;
+    }
+    @media (min-width: 768px) {
+        .block-container { max-width: 820px; }
+    }
+    @media (min-width: 1200px) {
+        .block-container { max-width: 1000px; }
+    }
+
+    .stApp {
         font-family: 'Manrope', sans-serif;
     }
 
@@ -332,8 +347,11 @@ def decode_barcode(image_bytes):
 
 def lookup_barcode(code):
   """Looks up a UPC/EAN code via UPCitemdb's free trial endpoint (no API key
-  needed). Returns {'title': ...} on a match, or None if nothing was found
-  or the request failed -- always safe to fall back to manual entry."""
+  needed). Returns {'title': ..., 'year': int or None} on a match, or None
+  if nothing was found or the request failed -- always safe to fall back to
+  manual entry. UPCitemdb doesn't have a dedicated release-year field, so
+  the year is a best-effort guess pulled out of the title/description text,
+  and may well be missing or wrong -- worth double-checking either way."""
   if requests is None:
     return None
   try:
@@ -344,8 +362,19 @@ def lookup_barcode(code):
     )
     data = resp.json()
     items = data.get("items", [])
-    if items:
-      return {"title": items[0].get("title", "")}
+    if not items:
+      return None
+
+    item = items[0]
+    title = item.get("title", "")
+    description = item.get("description", "") or ""
+
+    year = None
+    year_match = re.search(r"\b(19[5-9]\d|20[0-4]\d)\b", f"{title} {description}")
+    if year_match:
+      year = int(year_match.group(1))
+
+    return {"title": title, "year": year}
   except Exception:
     pass
   return None
@@ -976,15 +1005,27 @@ try:
 
           with st.form("barcode_add_form"):
             prefill_title = lookup_result.get("title", "") if lookup_result else ""
+            prefill_year = lookup_result.get("year") if lookup_result else None
+
             if lookup_result:
               st.success("Found a match online — check it's right before adding:")
             else:
               st.warning("No online match for this barcode — enter the details manually.")
 
+            if lookup_result and not prefill_year:
+              st.caption("⚠️ This barcode database doesn't include a release year — please fill it in.")
+
             b_title = st.text_input("Title *", value=prefill_title)
             bcol1, bcol2 = st.columns(2)
             with bcol1:
-              b_year = st.number_input("Year", min_value=1900, max_value=2100, value=2020, step=1, key="b_year")
+              b_year = st.number_input(
+                  "Year",
+                  min_value=1900,
+                  max_value=2100,
+                  value=prefill_year if prefill_year else datetime.date.today().year,
+                  step=1,
+                  key="b_year",
+              )
             with bcol2:
               b_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"], key="b_format")
             b_notes = st.text_input("Notes (optional)", value=(f"Barcode: {decoded_code}"))
