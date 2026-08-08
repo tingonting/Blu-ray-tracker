@@ -718,16 +718,90 @@ def cast_fields_from_string(cast_text):
   return {f"Actor {i + 1}": name for i, name in enumerate(names)}
 
 
+def update_person_sheet(book, sheet_name, name_col_header, person_name, film_title, film_year, film_id):
+  """Keeps the Directors/Actors summary sheets in sync when a film is added.
+  These are static pre-computed values baked into the workbook, not
+  formulas, so nothing recalculates them automatically -- confirmed by
+  inspecting the raw cells rather than assumed. Updates the matching
+  person's row if one exists, or adds a new one."""
+  if sheet_name not in book.sheetnames or not person_name:
+    return
+  sheet = book[sheet_name]
+  header_row = 4
+
+  name_col = get_col_index(sheet, name_col_header, header_row)
+  owned_col = get_col_index(sheet, "Films Owned", header_row)
+  earliest_col = get_col_index(sheet, "Earliest Film", header_row)
+  latest_col = get_col_index(sheet, "Latest Film", header_row)
+  films_col = get_col_index(sheet, "Films in Collection", header_row)
+  ids_col = get_col_index(sheet, "Film IDs", header_row)
+  if not name_col:
+    return
+
+  target_row = None
+  for r in range(header_row + 1, sheet.max_row + 1):
+    cell_val = sheet.cell(row=r, column=name_col).value
+    if cell_val and str(cell_val).strip().lower() == person_name.strip().lower():
+      target_row = r
+      break
+
+  try:
+    year_int = int(float(film_year)) if film_year else None
+  except (TypeError, ValueError):
+    year_int = None
+
+  if target_row:
+    if owned_col:
+      current = sheet.cell(row=target_row, column=owned_col).value or 0
+      sheet.cell(row=target_row, column=owned_col, value=int(current) + 1)
+    if earliest_col and year_int:
+      current = sheet.cell(row=target_row, column=earliest_col).value
+      if not current or year_int < int(current):
+        sheet.cell(row=target_row, column=earliest_col, value=year_int)
+    if latest_col and year_int:
+      current = sheet.cell(row=target_row, column=latest_col).value
+      if not current or year_int > int(current):
+        sheet.cell(row=target_row, column=latest_col, value=year_int)
+    if films_col:
+      current = sheet.cell(row=target_row, column=films_col).value or ""
+      existing_titles = [t.strip() for t in str(current).split(",") if t.strip()]
+      if film_title and film_title not in existing_titles:
+        existing_titles.append(film_title)
+        sheet.cell(row=target_row, column=films_col, value=", ".join(existing_titles))
+    if ids_col:
+      current = sheet.cell(row=target_row, column=ids_col).value or ""
+      existing_ids = [i.strip() for i in str(current).split(",") if i.strip()]
+      if film_id and film_id not in existing_ids:
+        existing_ids.append(film_id)
+        sheet.cell(row=target_row, column=ids_col, value=", ".join(existing_ids))
+  else:
+    new_row = sheet.max_row + 1
+    sheet.cell(row=new_row, column=name_col, value=person_name)
+    if owned_col:
+      sheet.cell(row=new_row, column=owned_col, value=1)
+    if earliest_col and year_int:
+      sheet.cell(row=new_row, column=earliest_col, value=year_int)
+    if latest_col and year_int:
+      sheet.cell(row=new_row, column=latest_col, value=year_int)
+    if films_col and film_title:
+      sheet.cell(row=new_row, column=films_col, value=film_title)
+    if ids_col and film_id:
+      sheet.cell(row=new_row, column=ids_col, value=film_id)
+
+
 def add_to_collection(fields):
   """Adds a new film to the Collection sheet. fields is a dict of
   {header_name: value} -- only columns that exist in the sheet get written,
-  so this stays safe even if the sheet's structure changes."""
+  so this stays safe even if the sheet's structure changes. Also syncs the
+  Directors/Actors summary sheets so 'Browse by Actor/Director' picks up
+  the new film immediately instead of only showing stale, pre-built data."""
   book = openpyxl.load_workbook(FILE_PATH)
   sheet = book["Collection"]
   next_row = sheet.max_row + 1
 
   film_id_col = get_col_index(sheet, "Film ID") or 1
-  sheet.cell(row=next_row, column=film_id_col, value=next_film_id(collection_df))
+  new_film_id = next_film_id(collection_df)
+  sheet.cell(row=next_row, column=film_id_col, value=new_film_id)
 
   for header_name, value in fields.items():
     if value in (None, ""):
@@ -735,6 +809,16 @@ def add_to_collection(fields):
     col = get_col_index(sheet, header_name)
     if col:
       sheet.cell(row=next_row, column=col, value=value)
+
+  film_title = fields.get("Title", "")
+  film_year = fields.get("Year")
+  director_name = fields.get("Director")
+  if director_name:
+    update_person_sheet(book, "Directors", "Director", director_name, film_title, film_year, new_film_id)
+  for i in range(1, 6):
+    actor_name = fields.get(f"Actor {i}")
+    if actor_name:
+      update_person_sheet(book, "Actors", "Actor", actor_name, film_title, film_year, new_film_id)
 
   book.save(FILE_PATH)
   save_and_sync(FILE_PATH)
