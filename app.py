@@ -315,6 +315,7 @@ def tmdb_lookup_cached(title, year=None):
     release_year = int(release_date[:4]) if release_date[:4].isdigit() else None
 
     return {
+        "id": movie_id,
         "genre": genres,
         "director": director,
         "runtime": detail.get("runtime"),
@@ -324,6 +325,34 @@ def tmdb_lookup_cached(title, year=None):
     }
   except Exception:
     return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def tmdb_recommendations_cached(movie_id):
+  """Films similar to the given TMDb movie ID. Returns a list of
+  {'title':..., 'year':..., 'poster_path':...} dicts, or [] on failure --
+  used to power the 'Because you loved...' Wishlist suggestions."""
+  if requests is None or not tmdb_configured():
+    return []
+  try:
+    api_key = st.secrets["tmdb"]["api_key"]
+    resp = requests.get(
+        f"https://api.themoviedb.org/3/movie/{movie_id}/recommendations",
+        params={"api_key": api_key},
+        timeout=8,
+    )
+    results = resp.json().get("results", [])
+    out = []
+    for r in results:
+      release_date = r.get("release_date", "") or ""
+      out.append({
+          "title": r.get("title", ""),
+          "year": int(release_date[:4]) if release_date[:4].isdigit() else None,
+          "poster_path": r.get("poster_path"),
+      })
+    return out
+  except Exception:
+    return []
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -587,7 +616,7 @@ def curated_browse_view(df):
   """A phone-friendly slice of the collection: just the columns someone
   browsing would actually want to see, with clean values -- not the full
   26-column spreadsheet."""
-  wanted_cols = ["Title", "Year", "Format", "Watched", "Rating (1-5)"]
+  wanted_cols = ["Title", "Year", "Format", "Watched", "Rating (1-5)", "Date Watched"]
   cols_present = [c for c in wanted_cols if c in df.columns]
   view = df[cols_present].copy()
 
@@ -598,6 +627,9 @@ def curated_browse_view(df):
   if "Rating (1-5)" in view.columns:
     view["Rating (1-5)"] = view["Rating (1-5)"].apply(rating_stars_display)
     view = view.rename(columns={"Rating (1-5)": "Rating"})
+  if "Date Watched" in view.columns:
+    view["Date Watched"] = view["Date Watched"].apply(format_date_watched)
+    view = view.rename(columns={"Date Watched": "Last Watched"})
 
   return view.reset_index(drop=True)
 
@@ -645,6 +677,31 @@ def get_col_index(sheet, header_name, header_row=4):
   return None
 
 
+def ensure_column(sheet, header_name, header_row=4):
+  """Like get_col_index, but creates the column (writing the header text)
+  if it doesn't exist yet -- used for 'Date Watched', which isn't part of
+  the original spreadsheet."""
+  col = get_col_index(sheet, header_name, header_row)
+  if col:
+    return col
+  new_col = sheet.max_column + 1
+  sheet.cell(row=header_row, column=new_col, value=header_name)
+  return new_col
+
+
+def format_date_watched(value):
+  """Turns a stored Date Watched value into a clean dd/mm/yyyy string, or
+  '' if it's blank/unset."""
+  if pd.isna(value) or str(value).strip() == "":
+    return ""
+  if isinstance(value, (datetime.date, datetime.datetime)):
+    return value.strftime("%d/%m/%Y")
+  try:
+    return pd.to_datetime(value).strftime("%d/%m/%Y")
+  except Exception:
+    return str(value)
+
+
 def add_to_collection(fields):
   """Adds a new film to the Collection sheet. fields is a dict of
   {header_name: value} -- only columns that exist in the sheet get written,
@@ -686,10 +743,11 @@ def stars_to_number(star_string):
   return count if count > 0 else None
 
 
-def save_collection_update(film_id, watched_value, rating_value):
+def save_collection_update(film_id, watched_value, rating_value, date_watched=None):
   """Writes Watched + Rating to the Collection sheet, and mirrors the
   numeric rating into the Ratings sheet's 'Your Rating /5' column so the
-  two stay in sync."""
+  two stay in sync. date_watched is only written when the film is marked
+  Watched -- pass None to leave it untouched (e.g. when unmarking)."""
   book = openpyxl.load_workbook(FILE_PATH)
   coll_sheet = book["Collection"]
   target_row = find_row_by_id(coll_sheet, id_column=1, target_id=film_id)
@@ -698,6 +756,11 @@ def save_collection_update(film_id, watched_value, rating_value):
 
   coll_sheet.cell(row=target_row, column=7, value=watched_value)
   coll_sheet.cell(row=target_row, column=8, value=rating_value)
+
+  if is_watched(watched_value) and date_watched:
+    date_col = ensure_column(coll_sheet, "Date Watched")
+    date_str = date_watched.strftime("%Y-%m-%d") if hasattr(date_watched, "strftime") else str(date_watched)
+    coll_sheet.cell(row=target_row, column=date_col, value=date_str)
 
   if "Ratings" in book.sheetnames:
     ratings_sheet = book["Ratings"]
@@ -923,6 +986,8 @@ try:
         p_watched_raw = picked_movie.get("Watched", "No")
         p_watched = watched_display(p_watched_raw)
         p_rating_display = rating_stars_display(picked_movie.get("Rating (1-5)"))
+        p_date_watched = format_date_watched(picked_movie.get("Date Watched")) if "Date Watched" in picked_movie.index else ""
+        p_last_watched_html = f"<br><b>Last watched:</b> {p_date_watched}" if p_date_watched else ""
 
         p_plot_html = ""
         if tmdb_configured():
@@ -941,7 +1006,7 @@ try:
                     <p style="font-size: 0.95em; margin-top: 8px; opacity: 0.85;">
                         {p_format_badge} &nbsp;<b>Director:</b> {p_director}<br>
                         <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
-                        <b>Rating:</b> {p_rating_display}
+                        <b>Rating:</b> {p_rating_display}{p_last_watched_html}
                     </p>
                     {p_plot_html}
                 </div>
@@ -966,9 +1031,16 @@ try:
                 index=2,
                 key=f"qp_stars_{p_id}",
             )
+          quick_date_watched = st.date_input(
+              "Date watched (optional)",
+              value=pd.to_datetime(picked_movie.get("Date Watched")).date()
+                    if "Date Watched" in picked_movie.index and pd.notna(picked_movie.get("Date Watched"))
+                    else datetime.date.today(),
+              key=f"qp_date_{p_id}",
+          )
 
           if st.form_submit_button("💾 Save to Excel"):
-            if save_collection_update(p_id, quick_watched, quick_stars):
+            if save_collection_update(p_id, quick_watched, quick_stars, quick_date_watched):
               st.cache_data.clear()
               st.success(f"Updated '{p_title}' successfully!")
               if quick_stars == STAR_OPTIONS[-1]:
@@ -1062,9 +1134,14 @@ try:
               STAR_OPTIONS,
               index=default_star_index,
           )
+        current_date_watched = movie_row.get("Date Watched") if "Date Watched" in movie_row.index else None
+        new_date_watched = st.date_input(
+            "Date watched (optional)",
+            value=pd.to_datetime(current_date_watched).date() if pd.notna(current_date_watched) else datetime.date.today(),
+        )
 
         if st.form_submit_button("💾 Save Changes"):
-          if save_collection_update(selected_id, watched_status, new_rating_stars):
+          if save_collection_update(selected_id, watched_status, new_rating_stars, new_date_watched):
             st.cache_data.clear()
             st.success(f"Saved '{selected_movie}'!")
             if new_rating_stars == STAR_OPTIONS[-1]:
@@ -1260,6 +1337,51 @@ try:
   with app_mode[3]:
     st.subheader("🛒 Wishlist")
 
+    if tmdb_configured() and "Rating (1-5)" in valid_collection.columns:
+      with st.expander("✨ Because you loved these..."):
+        five_star = valid_collection.copy()
+        five_star["_stars"] = five_star["Rating (1-5)"].apply(stars_to_number)
+        five_star = five_star[five_star["_stars"] == 5].head(5)
+
+        if five_star.empty:
+          st.caption("Rate some films 5 stars from the Update tab and suggestions will show up here.")
+        else:
+          owned_titles = set(valid_collection["Title"].dropna().str.strip().str.lower())
+          wishlist_titles = set(valid_wishlist["Title"].dropna().str.strip().str.lower()) if not valid_wishlist.empty else set()
+
+          seen = set()
+          suggestions = []
+          for _, source_row in five_star.iterrows():
+            source_lookup = tmdb_lookup_cached(source_row.get("Title", ""), source_row.get("Year"))
+            if not source_lookup or not source_lookup.get("id"):
+              continue
+            for rec in tmdb_recommendations_cached(source_lookup["id"]):
+              rec_title = rec.get("title", "")
+              key = rec_title.strip().lower()
+              if not rec_title or key in seen or key in owned_titles or key in wishlist_titles:
+                continue
+              seen.add(key)
+              suggestions.append(rec)
+            if len(suggestions) >= 10:
+              break
+
+          if not suggestions:
+            st.caption("No new suggestions right now — try rating a few more films 5 stars.")
+          else:
+            for rec in suggestions[:10]:
+              rcol1, rcol2 = st.columns([1, 3])
+              with rcol1:
+                if rec.get("poster_path"):
+                  st.image(f"https://image.tmdb.org/t/p/w200{rec['poster_path']}")
+              with rcol2:
+                rec_label = f"{rec['title']} ({rec['year']})" if rec.get("year") else rec["title"]
+                st.markdown(f"**{rec_label}**")
+                if st.button("+ Add to Wishlist", key=f"rec_add_{rec['title']}"):
+                  add_to_wishlist(rec["title"])
+                  st.cache_data.clear()
+                  st.success(f"Added '{rec['title']}' to your Wishlist!")
+                  st.rerun()
+
     if not valid_wishlist.empty:
       # Deal alerts: cheapest found price has actually dropped to/below target
       has_price_cols = (
@@ -1441,7 +1563,7 @@ try:
         "Excel once to refresh them (this app tries to do it automatically "
         "if LibreOffice is installed on your machine)."
     )
-    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Franchises", "Awards", "Ratings"])
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["Franchises", "Awards", "Ratings", "People"])
     with sub_tab1:
       if (
           "Collection" in valid_collection.columns
@@ -1526,6 +1648,50 @@ try:
             st.markdown(f"{stars} — **{title}** ({year_str})")
       else:
         st.dataframe(ratings_df, use_container_width=True, height=300)
+
+    with sub_tab4:
+      person_type = st.radio("Browse by", ["Director", "Actor"], horizontal=True, key="people_browse_type")
+      people_df = directors_df if person_type == "Director" else actors_df
+      name_col = "Director" if person_type == "Director" else "Actor"
+
+      if name_col not in people_df.columns or "Films Owned" not in people_df.columns:
+        st.info(f"No {person_type.lower()} data found in this sheet.")
+      else:
+        people_sorted = people_df.dropna(subset=[name_col]).sort_values(by="Films Owned", ascending=False)
+        options = [
+            f"{row[name_col]} ({int(row['Films Owned'])} films)"
+            for _, row in people_sorted.iterrows()
+        ]
+        name_lookup = dict(zip(options, people_sorted[name_col]))
+
+        selected_person_option = st.selectbox(f"Select a {person_type.lower()}:", ["-- Select --"] + options)
+
+        if selected_person_option != "-- Select --":
+          selected_name = name_lookup[selected_person_option]
+          person_row = people_sorted[people_sorted[name_col] == selected_name].iloc[0]
+
+          pcol1, pcol2, pcol3 = st.columns(3)
+          with pcol1:
+            st.metric("Films Owned", int(person_row.get("Films Owned", 0)))
+          with pcol2:
+            st.metric("Earliest", safe_year(person_row.get("Earliest Film")))
+          with pcol3:
+            st.metric("Latest", safe_year(person_row.get("Latest Film")))
+
+          film_ids_raw = person_row.get("Film IDs", "")
+          film_ids = [f.strip() for f in str(film_ids_raw).split(",") if f.strip()] if pd.notna(film_ids_raw) else []
+
+          if film_ids and "Film ID" in valid_collection.columns:
+            person_films = valid_collection[valid_collection["Film ID"].astype(str).isin(film_ids)]
+            st.dataframe(
+                style_format_column(curated_browse_view(person_films)),
+                use_container_width=True,
+                hide_index=True,
+            )
+          else:
+            films_text = person_row.get("Films in Collection", "")
+            if pd.notna(films_text):
+              st.markdown(films_text)
 
   # --- TAB 7: ON THIS DAY ---
   with app_mode[6]:
