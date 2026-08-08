@@ -418,6 +418,22 @@ def next_film_id(collection_df):
   return f"F{next_num:04d}"
 
 
+def add_to_wishlist(title, priority=3, target_price=None, notes=""):
+  """Adds a film to the Wishlist sheet. Shared by the Wishlist form and the
+  'Add to Wishlist' shortcut on a zero-result Search."""
+  book = openpyxl.load_workbook(FILE_PATH)
+  sheet = book["Wishlist"]
+  next_row = sheet.max_row + 1
+  sheet.cell(row=next_row, column=1, value=title)
+  sheet.cell(row=next_row, column=3, value=priority)
+  if target_price is not None:
+    sheet.cell(row=next_row, column=4, value=target_price)
+  sheet.cell(row=next_row, column=8, value="No")
+  sheet.cell(row=next_row, column=9, value=notes)
+  book.save(FILE_PATH)
+  save_and_sync(FILE_PATH)
+
+
 try:
   (
       collection_df,
@@ -630,8 +646,16 @@ try:
             .str.contains(query, case=False, na=False)
         )
       results = collection_df[mask]
-      st.success(f"Found {len(results)} matches:")
-      st.dataframe(curated_browse_view(results), use_container_width=True, hide_index=True)
+      if len(results) == 0:
+        st.warning(f"No matches for '{query}' in your collection.")
+        if st.button(f"🛒 Add '{query}' to Wishlist", key="search_add_to_wishlist"):
+          add_to_wishlist(query)
+          st.cache_data.clear()
+          st.success(f"Added '{query}' to your Wishlist!")
+          st.rerun()
+      else:
+        st.success(f"Found {len(results)} matches:")
+        st.dataframe(curated_browse_view(results), use_container_width=True, hide_index=True)
     else:
       st.info("Type a keyword above to find a film.")
 
@@ -833,16 +857,7 @@ try:
 
       if st.form_submit_button("💾 Add Film"):
         if new_title:
-          book = openpyxl.load_workbook(FILE_PATH)
-          sheet = book["Wishlist"]
-          next_row = sheet.max_row + 1
-          sheet.cell(row=next_row, column=1, value=new_title)
-          sheet.cell(row=next_row, column=3, value=new_priority)
-          sheet.cell(row=next_row, column=4, value=new_target_price)
-          sheet.cell(row=next_row, column=8, value="No")
-          sheet.cell(row=next_row, column=9, value=new_notes)
-          book.save(FILE_PATH)
-          save_and_sync(FILE_PATH)
+          add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
           st.cache_data.clear()
           st.success(f"Added '{new_title}'!")
           st.rerun()
