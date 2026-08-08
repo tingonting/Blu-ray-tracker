@@ -1,4 +1,5 @@
 import random
+import difflib
 import re
 import urllib.parse
 import datetime
@@ -539,6 +540,30 @@ def clean_title_for_search(title):
       flags=re.IGNORECASE,
   )
   return cleaned.strip(" -–—")
+
+
+def find_possible_duplicates(title, threshold=0.82):
+  """Checks whether a title looks like something already owned -- an exact
+  case-insensitive match, plus near-matches via fuzzy string comparison to
+  catch things like punctuation or minor typo differences. Returns a list
+  of (existing_title, existing_year) tuples. This is advisory only (shown
+  as a warning before adding), never blocks the add -- upgrades, re-buys,
+  and similarly-named different films are all legitimate."""
+  if "valid_collection" not in globals() or "Title" not in valid_collection.columns or not title:
+    return []
+  existing = valid_collection[["Title", "Year"]].dropna(subset=["Title"])
+  title_norm = title.strip().lower()
+  matches = []
+  for _, row in existing.iterrows():
+    existing_title = str(row["Title"])
+    existing_norm = existing_title.strip().lower()
+    if existing_norm == title_norm:
+      matches.append((existing_title, row.get("Year")))
+      continue
+    ratio = difflib.SequenceMatcher(None, title_norm, existing_norm).ratio()
+    if ratio >= threshold:
+      matches.append((existing_title, row.get("Year")))
+  return matches
 
 
 def lookup_barcode(code):
@@ -1324,21 +1349,77 @@ try:
           "In column", ["All"] + collection_df.columns.tolist()
       )
 
-    if query:
-      if search_column == "All":
-        mask = collection_df.astype(str).apply(
-            lambda x: x.str.contains(query, case=False, na=False)
-        ).any(axis=1)
-      else:
-        mask = (
-            collection_df[search_column]
-            .astype(str)
-            .str.contains(query, case=False, na=False)
+    with st.expander("🔎 Filters"):
+      fcol1, fcol2 = st.columns(2)
+      with fcol1:
+        genre_options = (
+            split_multi_value_counts(valid_collection["Genre"]).index.tolist()
+            if "Genre" in valid_collection.columns else []
         )
-      results = collection_df[mask]
+        selected_genres = st.multiselect("Genre", genre_options)
+      with fcol2:
+        if "Year" in valid_collection.columns:
+          decades_available = sorted(
+              pd.to_numeric(valid_collection["Year"], errors="coerce")
+              .dropna().apply(lambda y: int(y) // 10 * 10).unique().tolist()
+          )
+          decade_options = ["All"] + [f"{d}s" for d in decades_available]
+        else:
+          decade_options = ["All"]
+        selected_decade = st.selectbox("Decade", decade_options)
+
+      fcol3, fcol4 = st.columns(2)
+      with fcol3:
+        format_options = (
+            ["All"] + sorted(valid_collection["Format"].dropna().unique().tolist())
+            if "Format" in valid_collection.columns else ["All"]
+        )
+        selected_format_filter2 = st.selectbox("Format", format_options, key="search_filter_format")
+      with fcol4:
+        selected_watched_filter2 = st.selectbox("Status", ["All", "Watched", "Unwatched"], key="search_filter_watched")
+
+    filters_active = bool(selected_genres) or selected_decade != "All" or selected_format_filter2 != "All" or selected_watched_filter2 != "All"
+
+    if query or filters_active:
+      results = collection_df.dropna(subset=["Title"]).copy()
+
+      if query:
+        if search_column == "All":
+          mask = results.astype(str).apply(
+              lambda x: x.str.contains(query, case=False, na=False)
+          ).any(axis=1)
+        else:
+          mask = (
+              results[search_column]
+              .astype(str)
+              .str.contains(query, case=False, na=False)
+          )
+        results = results[mask]
+
+      if selected_genres and "Genre" in results.columns:
+        def _genre_match(cell):
+          cell_genres = [g.strip() for g in str(cell).split(",")]
+          return any(g in cell_genres for g in selected_genres)
+        results = results[results["Genre"].apply(_genre_match)]
+
+      if selected_decade != "All" and "Year" in results.columns:
+        decade_start = int(selected_decade[:-1])
+        years = pd.to_numeric(results["Year"], errors="coerce")
+        results = results[(years >= decade_start) & (years < decade_start + 10)]
+
+      if selected_format_filter2 != "All" and "Format" in results.columns:
+        results = results[results["Format"] == selected_format_filter2]
+
+      if selected_watched_filter2 != "All" and "Watched" in results.columns:
+        if selected_watched_filter2 == "Watched":
+          results = results[results["Watched"].apply(is_watched)]
+        else:
+          results = results[~results["Watched"].apply(is_watched)]
+
       if len(results) == 0:
-        st.warning(f"No matches for '{query}' in your collection.")
-        if st.button(f"🛒 Add '{query}' to Wishlist", key="search_add_to_wishlist"):
+        no_match_msg = f"No matches for '{query}'" if query else "No matches for these filters"
+        st.warning(f"{no_match_msg} in your collection.")
+        if query and st.button(f"🛒 Add '{query}' to Wishlist", key="search_add_to_wishlist"):
           add_to_wishlist(query)
           st.cache_data.clear()
           st.success(f"Added '{query}' to your Wishlist!")
@@ -1347,7 +1428,7 @@ try:
         st.success(f"Found {len(results)} matches:")
         st.dataframe(style_format_column(curated_browse_view(results)), use_container_width=True, hide_index=True)
     else:
-      st.info("Type a keyword above to find a film.")
+      st.info("Type a keyword or set a filter above to find a film.")
 
   # --- TAB 3: COLLECTION & UPDATE ---
   with app_mode[2]:
@@ -1440,6 +1521,12 @@ try:
             "Year", min_value=1900, max_value=2100,
             value=datetime.date.today().year, step=1, key="manual_year_input",
         )
+
+      if manual_title:
+        possible_dupes = find_possible_duplicates(manual_title)
+        if possible_dupes:
+          dupe_list = ", ".join(f"{t} ({safe_year(y)})" for t, y in possible_dupes[:3])
+          st.warning(f"⚠️ You might already own this: {dupe_list}. Still fine to add if it's a different edition.")
 
       if tmdb_configured():
         if st.button("🔎 Look up on TMDb", key="manual_tmdb_btn"):
@@ -1535,6 +1622,11 @@ try:
             tmdb_result = tmdb_lookup_cached(prefill_title, prefill_year)
             if tmdb_result and tmdb_result.get("year"):
               prefill_year = tmdb_result["year"]
+
+          possible_dupes = find_possible_duplicates(prefill_title) if prefill_title else []
+          if possible_dupes:
+            dupe_list = ", ".join(f"{t} ({safe_year(y)})" for t, y in possible_dupes[:3])
+            st.warning(f"⚠️ You might already own this: {dupe_list}. Still fine to add if it's a different edition.")
 
           with st.form("barcode_add_form"):
             if upc_result:
@@ -1830,6 +1922,68 @@ try:
   # --- TAB 5: STATS ---
   with app_mode[4]:
     st.subheader("📊 Collection Insights")
+
+    st.markdown("### 🎊 Yearly Rewind")
+    if "Date Watched" not in valid_collection.columns:
+      st.info("Log some watch dates from the Update tab and your yearly rewind will show up here.")
+    else:
+      watched_dates = pd.to_datetime(valid_collection["Date Watched"], errors="coerce")
+      years_available = sorted(watched_dates.dt.year.dropna().unique().astype(int).tolist(), reverse=True)
+
+      if not years_available:
+        st.info("No watch dates logged yet — mark a few films watched with a date and check back.")
+      else:
+        selected_rewind_year = st.selectbox("Year", years_available, key="rewind_year")
+        year_mask = watched_dates.dt.year == selected_rewind_year
+        year_films = valid_collection[year_mask].copy()
+        year_films["_watched_date"] = watched_dates[year_mask]
+
+        total_watched_this_year = len(year_films)
+
+        top_genre = None
+        if "Genre" in year_films.columns:
+          genre_counts = split_multi_value_counts(year_films["Genre"])
+          top_genre = genre_counts.index[0] if not genre_counts.empty else None
+
+        top_director = None
+        if "Director" in year_films.columns:
+          director_counts = split_multi_value_counts(year_films["Director"])
+          top_director = director_counts.index[0] if not director_counts.empty else None
+
+        busiest_month = None
+        if total_watched_this_year:
+          month_counts = year_films["_watched_date"].dt.strftime("%B").value_counts()
+          busiest_month = month_counts.index[0] if not month_counts.empty else None
+
+        longest_title = shortest_title = None
+        total_hours = None
+        if "Runtime (min)" in year_films.columns:
+          runtimes = pd.to_numeric(year_films["Runtime (min)"], errors="coerce").dropna()
+          if not runtimes.empty:
+            longest_idx = runtimes.idxmax()
+            shortest_idx = runtimes.idxmin()
+            longest_title = f"{year_films.loc[longest_idx, 'Title']} ({int(runtimes.loc[longest_idx])} min)"
+            shortest_title = f"{year_films.loc[shortest_idx, 'Title']} ({int(runtimes.loc[shortest_idx])} min)"
+            total_hours = runtimes.sum() / 60
+
+        rwcol1, rwcol2 = st.columns(2)
+        with rwcol1:
+          st.metric("Films Watched", total_watched_this_year)
+        with rwcol2:
+          st.metric("Hours Watched", f"{total_hours:.1f}" if total_hours else "—")
+
+        if top_genre:
+          st.markdown(f"**Top Genre:** {top_genre}")
+        if top_director:
+          st.markdown(f"**Top Director:** {top_director}")
+        if busiest_month:
+          st.markdown(f"**Busiest Month:** {busiest_month}")
+        if longest_title:
+          st.markdown(f"**Longest Watch:** {longest_title}")
+        if shortest_title:
+          st.markdown(f"**Shortest Watch:** {shortest_title}")
+
+    film_divider()
 
     if "Genre" in valid_collection.columns:
       st.markdown("**By Genre**")
