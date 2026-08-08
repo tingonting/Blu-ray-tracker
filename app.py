@@ -327,9 +327,13 @@ def tmdb_lookup_cached(title, year=None):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def tmdb_release_date_cached(title, year=None):
-  """Lighter-weight lookup used only for 'On This Day' -- just the search
-  call, no detail fetch, since only the release_date field is needed.
+def tmdb_release_date_cached(title, year=None, region="GB"):
+  """Used by 'On This Day' -- finds the film via search, then pulls the
+  actual UK release date from TMDb's per-country release_dates endpoint
+  (search's own release_date field is the primary/global date, usually US,
+  which is why Transformers: The Movie was showing its June 1986 US date
+  instead of its December 1986 UK one). Prefers a Theatrical release entry,
+  falling back to Limited Theatrical, then Premiere, then whatever's there.
   Cached for a day since a whole-collection scan is comparatively expensive."""
   if requests is None or not tmdb_configured():
     return None
@@ -342,8 +346,34 @@ def tmdb_release_date_cached(title, year=None):
         "https://api.themoviedb.org/3/search/movie", params=params, timeout=8
     )
     results = resp.json().get("results", [])
-    if results:
-      return results[0].get("release_date") or None
+    if not results:
+      return None
+    movie_id = results[0]["id"]
+    fallback_date = results[0].get("release_date") or None
+
+    rd_resp = requests.get(
+        f"https://api.themoviedb.org/3/movie/{movie_id}/release_dates",
+        params={"api_key": api_key},
+        timeout=8,
+    )
+    countries = rd_resp.json().get("results", [])
+    region_entry = next((c for c in countries if c.get("iso_3166_1") == region), None)
+    if not region_entry:
+      return fallback_date
+
+    dates = region_entry.get("release_dates", [])
+    # TMDb release types: 1=Premiere, 2=Theatrical (limited), 3=Theatrical,
+    # 4=Digital, 5=Physical, 6=TV -- prefer an actual cinema release date.
+    for preferred_type in (3, 2, 1):
+      match = next((d for d in dates if d.get("type") == preferred_type), None)
+      if match and match.get("release_date"):
+        return match["release_date"][:10]
+
+    dated_entries = sorted(d["release_date"] for d in dates if d.get("release_date"))
+    if dated_entries:
+      return dated_entries[0][:10]
+
+    return fallback_date
   except Exception:
     pass
   return None
