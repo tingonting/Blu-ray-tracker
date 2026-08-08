@@ -615,10 +615,15 @@ def rating_stars_display(rating_val):
 def curated_browse_view(df):
   """A phone-friendly slice of the collection: just the columns someone
   browsing would actually want to see, with clean values -- not the full
-  26-column spreadsheet."""
+  26-column spreadsheet. Always sorted alphabetically by Title, since Film
+  ID is really just an add-order number, not a Title order -- newly added
+  films should show up in their alphabetical place, not at the bottom."""
   wanted_cols = ["Title", "Year", "Format", "Watched", "Rating (1-5)", "Date Watched"]
   cols_present = [c for c in wanted_cols if c in df.columns]
   view = df[cols_present].copy()
+
+  if "Title" in view.columns:
+    view = view.sort_values(by="Title", key=lambda s: s.str.lower())
 
   if "Year" in view.columns:
     view["Year"] = view["Year"].apply(safe_year)
@@ -1089,7 +1094,7 @@ try:
   with app_mode[2]:
     st.subheader("📚 Update Status & Rating")
 
-    valid_collection_sorted = valid_collection.sort_values(by="Film ID")
+    valid_collection_sorted = valid_collection.sort_values(by="Title", key=lambda s: s.str.lower())
 
     # Build a label -> Film ID map so selection never depends on re-parsing text
     option_to_id = {}
