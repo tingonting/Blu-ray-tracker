@@ -953,11 +953,21 @@ try:
             st.warning("Title is required.")
 
     with add_tab2:
-      st.caption("Take a photo of the barcode on the case. Works best with good lighting and the barcode filling most of the frame.")
-      barcode_photo = st.camera_input("Scan barcode", key="barcode_camera")
+      st.caption(
+          "Tap below and choose 'Take Photo' — this opens your phone's real "
+          "camera app (which defaults to the rear camera), not a browser "
+          "preview. Works best with good lighting and the barcode filling "
+          "most of the frame."
+      )
+      barcode_photo = st.file_uploader(
+          "Scan barcode",
+          type=["jpg", "jpeg", "png"],
+          key="barcode_uploader",
+      )
 
       if barcode_photo is not None:
-        decoded_code = decode_barcode(barcode_photo.getvalue())
+        image_bytes = barcode_photo.getvalue()
+        decoded_code = decode_barcode(image_bytes)
         if not decoded_code:
           st.error("Couldn't read a barcode in that photo — try again with the barcode closer and well-lit.")
         else:

@@ -4,4 +4,3 @@ openpyxl
 requests
 pyzbar
 Pillow
-streamlit-back-camera-input
