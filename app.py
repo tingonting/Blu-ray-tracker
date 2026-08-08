@@ -314,6 +314,10 @@ def tmdb_lookup_cached(title, year=None):
     cast = detail.get("credits", {}).get("cast", [])
     cast_sorted = sorted(cast, key=lambda c: c.get("order", 999))
     top_cast = [c["name"] for c in cast_sorted[:5] if c.get("name")]
+    # Full cast (capped at 30 to avoid pathological ensemble-film sizes) --
+    # only used to keep the Actors summary sheet comprehensive, not written
+    # into Collection's Actor 1-5 columns, which stay top-5-only.
+    full_cast = [c["name"] for c in cast_sorted[:30] if c.get("name")]
     release_date = detail.get("release_date", "") or ""
     release_year = int(release_date[:4]) if release_date[:4].isdigit() else None
 
@@ -322,6 +326,7 @@ def tmdb_lookup_cached(title, year=None):
         "genre": genres,
         "director": director,
         "cast": top_cast,
+        "full_cast": full_cast,
         "runtime": detail.get("runtime"),
         "plot": detail.get("overview", ""),
         "year": release_year,
@@ -751,9 +756,29 @@ def update_person_sheet(book, sheet_name, name_col_header, person_name, film_tit
     year_int = None
 
   if target_row:
-    if owned_col:
-      current = sheet.cell(row=target_row, column=owned_col).value or 0
-      sheet.cell(row=target_row, column=owned_col, value=int(current) + 1)
+    current_films_val = sheet.cell(row=target_row, column=films_col).value or "" if films_col else ""
+    existing_titles = [t.strip() for t in str(current_films_val).split(",") if t.strip()]
+    already_has_film = bool(film_title) and film_title in existing_titles
+
+    # Only increment/append when this is genuinely a new film for this
+    # person -- otherwise re-running this (e.g. a bulk backfill across
+    # films that are already correctly counted) would double-count them.
+    if not already_has_film:
+      if owned_col:
+        current = sheet.cell(row=target_row, column=owned_col).value or 0
+        sheet.cell(row=target_row, column=owned_col, value=int(current) + 1)
+      if films_col and film_title:
+        existing_titles.append(film_title)
+        sheet.cell(row=target_row, column=films_col, value=", ".join(existing_titles))
+      if ids_col:
+        current = sheet.cell(row=target_row, column=ids_col).value or ""
+        existing_ids = [i.strip() for i in str(current).split(",") if i.strip()]
+        if film_id and film_id not in existing_ids:
+          existing_ids.append(film_id)
+          sheet.cell(row=target_row, column=ids_col, value=", ".join(existing_ids))
+
+    # Earliest/Latest are safe to recompute regardless -- min/max is
+    # naturally idempotent.
     if earliest_col and year_int:
       current = sheet.cell(row=target_row, column=earliest_col).value
       if not current or year_int < int(current):
@@ -762,18 +787,6 @@ def update_person_sheet(book, sheet_name, name_col_header, person_name, film_tit
       current = sheet.cell(row=target_row, column=latest_col).value
       if not current or year_int > int(current):
         sheet.cell(row=target_row, column=latest_col, value=year_int)
-    if films_col:
-      current = sheet.cell(row=target_row, column=films_col).value or ""
-      existing_titles = [t.strip() for t in str(current).split(",") if t.strip()]
-      if film_title and film_title not in existing_titles:
-        existing_titles.append(film_title)
-        sheet.cell(row=target_row, column=films_col, value=", ".join(existing_titles))
-    if ids_col:
-      current = sheet.cell(row=target_row, column=ids_col).value or ""
-      existing_ids = [i.strip() for i in str(current).split(",") if i.strip()]
-      if film_id and film_id not in existing_ids:
-        existing_ids.append(film_id)
-        sheet.cell(row=target_row, column=ids_col, value=", ".join(existing_ids))
   else:
     new_row = sheet.max_row + 1
     sheet.cell(row=new_row, column=name_col, value=person_name)
@@ -789,12 +802,89 @@ def update_person_sheet(book, sheet_name, name_col_header, person_name, film_tit
       sheet.cell(row=new_row, column=ids_col, value=film_id)
 
 
-def add_to_collection(fields):
+def backfill_missing_details(films_to_process):
+  """One-time bulk enrichment for films added before TMDb auto-fill existed
+  (or added manually without it). Looks each film up on TMDb in parallel,
+  then fills in Genre/Director/Cast/Runtime/Notes -- but ONLY on cells that
+  are genuinely blank, never overwriting anything already filled in. Also
+  syncs the Directors/Actors summary sheets the same way a normal Add does.
+  films_to_process is a list of (film_id, title, year) tuples. Returns
+  (updated_count, no_match_count). Does one single save at the end rather
+  than one per film, since this can touch hundreds of rows at once."""
+
+  def _lookup(item):
+    film_id, title, year = item
+    return film_id, title, year, tmdb_lookup_cached(title, year)
+
+  with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    lookups = list(executor.map(_lookup, films_to_process))
+
+  book = openpyxl.load_workbook(FILE_PATH)
+  sheet = book["Collection"]
+
+  updated = 0
+  no_match = 0
+
+  genre_col = get_col_index(sheet, "Genre")
+  director_col = get_col_index(sheet, "Director")
+  runtime_col = get_col_index(sheet, "Runtime (min)")
+  notes_col = get_col_index(sheet, "Notes")
+  actor_cols = [get_col_index(sheet, f"Actor {i}") for i in range(1, 6)]
+
+  for film_id, title, year, result in lookups:
+    if not result:
+      no_match += 1
+      continue
+
+    target_row = find_row_by_id(sheet, id_column=1, target_id=film_id)
+    if not target_row:
+      no_match += 1
+      continue
+
+    changed = False
+
+    def _fill(col, value):
+      nonlocal changed
+      if col and value and not sheet.cell(row=target_row, column=col).value:
+        sheet.cell(row=target_row, column=col, value=value)
+        changed = True
+
+    _fill(genre_col, result.get("genre"))
+    _fill(director_col, result.get("director"))
+    _fill(runtime_col, result.get("runtime"))
+    _fill(notes_col, result.get("plot"))
+
+    top_cast = result.get("cast", [])
+    for i, col in enumerate(actor_cols):
+      if i < len(top_cast):
+        _fill(col, top_cast[i])
+
+    if result.get("director"):
+      update_person_sheet(book, "Directors", "Director", result["director"], title, year, film_id)
+    for actor_name in result.get("full_cast", []):
+      update_person_sheet(book, "Actors", "Actor", actor_name, title, year, film_id)
+
+    if changed:
+      updated += 1
+
+  book.save(FILE_PATH)
+  save_and_sync(FILE_PATH)
+  return updated, no_match
+
+
+def add_to_collection(fields, full_cast=None):
   """Adds a new film to the Collection sheet. fields is a dict of
   {header_name: value} -- only columns that exist in the sheet get written,
   so this stays safe even if the sheet's structure changes. Also syncs the
   Directors/Actors summary sheets so 'Browse by Actor/Director' picks up
-  the new film immediately instead of only showing stale, pre-built data."""
+  the new film immediately instead of only showing stale, pre-built data.
+
+  full_cast (optional) is the FULL cast list from TMDb, used only for the
+  Actors-sheet sync -- Collection's own Actor 1-5 columns stay top-5-only
+  (that's a fixed structural limit of the sheet), but the Actors summary
+  sheet has no such cap, so someone like a supporting/non-top-5-billed actor
+  still shows up under 'Browse by Actor' instead of being invisible. Falls
+  back to just the 5 names written to Collection if not provided."""
   book = openpyxl.load_workbook(FILE_PATH)
   sheet = book["Collection"]
   next_row = sheet.max_row + 1
@@ -815,8 +905,9 @@ def add_to_collection(fields):
   director_name = fields.get("Director")
   if director_name:
     update_person_sheet(book, "Directors", "Director", director_name, film_title, film_year, new_film_id)
-  for i in range(1, 6):
-    actor_name = fields.get(f"Actor {i}")
+
+  actor_names = full_cast if full_cast else [fields.get(f"Actor {i}") for i in range(1, 6)]
+  for actor_name in actor_names:
     if actor_name:
       update_person_sheet(book, "Actors", "Actor", actor_name, film_title, film_year, new_film_id)
 
@@ -1330,7 +1421,7 @@ try:
                 "Notes": m_notes,
                 "Watched": "No",
                 **cast_fields_from_string(m_cast),
-            })
+            }, full_cast=(tmdb_prefill.get("full_cast") if tmdb_prefill else None))
             st.session_state.pop("manual_tmdb_result", None)
             st.cache_data.clear()
             st.success(f"Added '{manual_title}' to your collection!")
@@ -1427,7 +1518,7 @@ try:
                     "Notes": b_notes,
                     "Watched": "No",
                     **cast_fields_from_string(b_cast),
-                })
+                }, full_cast=(tmdb_result.get("full_cast") if tmdb_result else None))
                 st.cache_data.clear()
                 st.success(f"Added '{b_title}' to your collection!")
                 st.rerun()
@@ -1435,6 +1526,36 @@ try:
                 st.warning("Title is required.")
 
     film_divider()
+
+    with st.expander("🔄 Expand Actor/Director coverage from TMDb (one-time)"):
+      st.caption(
+          "Your original 350 films likely only ever had up to 5 actors "
+          "recorded each, even though a film's full cast is much bigger — "
+          "so someone who wasn't top-billed (like a supporting role) can be "
+          "invisible under Browse by Actor. This looks up every owned "
+          "film's FULL cast on TMDb and expands the Actors/Directors sheets "
+          "to include everyone, not just the top 5. It won't touch "
+          "Collection's own Genre/Director/Cast/Notes cells except to fill "
+          "in any that are genuinely blank — and it's safe to run more than "
+          "once, films already counted for someone won't be double-counted."
+      )
+      if not tmdb_configured():
+        st.info("Add a free TMDb API key to your secrets to use this — see the Add tab for setup notes.")
+      else:
+        st.write(f"This will look up all **{len(valid_collection)}** films in your collection.")
+        confirm_backfill = st.checkbox("Yes, look these up and expand actor/director coverage", key="confirm_backfill")
+        if st.button("Run backfill", disabled=not confirm_backfill):
+          films_to_process = [
+              (row.get("Film ID"), row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
+              for _, row in valid_collection.iterrows()
+              if row.get("Film ID") and row.get("Title")
+          ]
+          with st.spinner(f"Looking up {len(films_to_process)} films on TMDb — this can take a couple of minutes..."):
+            updated, no_match = backfill_missing_details(films_to_process)
+          st.cache_data.clear()
+          st.success(f"Processed {len(films_to_process)} films. {updated} had a blank cell filled in. {no_match} had no TMDb match.")
+          st.rerun()
+
     st.markdown("**Your collection**")
     st.dataframe(
         style_format_column(curated_browse_view(valid_collection)),
