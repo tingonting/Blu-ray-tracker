@@ -334,7 +334,9 @@ def tmdb_release_date_cached(title, year=None, region="GB"):
   which is why Transformers: The Movie was showing its June 1986 US date
   instead of its December 1986 UK one). Prefers a Theatrical release entry,
   falling back to Limited Theatrical, then Premiere, then whatever's there.
-  Cached for a day since a whole-collection scan is comparatively expensive."""
+  Returns {'release_date': ..., 'poster_path': ...} -- the poster comes free
+  from the same search call, no extra request needed. Cached for a day since
+  a whole-collection scan is comparatively expensive."""
   if requests is None or not tmdb_configured():
     return None
   try:
@@ -350,6 +352,7 @@ def tmdb_release_date_cached(title, year=None, region="GB"):
       return None
     movie_id = results[0]["id"]
     fallback_date = results[0].get("release_date") or None
+    poster_path = results[0].get("poster_path")
 
     rd_resp = requests.get(
         f"https://api.themoviedb.org/3/movie/{movie_id}/release_dates",
@@ -358,22 +361,23 @@ def tmdb_release_date_cached(title, year=None, region="GB"):
     )
     countries = rd_resp.json().get("results", [])
     region_entry = next((c for c in countries if c.get("iso_3166_1") == region), None)
-    if not region_entry:
-      return fallback_date
 
-    dates = region_entry.get("release_dates", [])
-    # TMDb release types: 1=Premiere, 2=Theatrical (limited), 3=Theatrical,
-    # 4=Digital, 5=Physical, 6=TV -- prefer an actual cinema release date.
-    for preferred_type in (3, 2, 1):
-      match = next((d for d in dates if d.get("type") == preferred_type), None)
-      if match and match.get("release_date"):
-        return match["release_date"][:10]
+    release_date = fallback_date
+    if region_entry:
+      dates = region_entry.get("release_dates", [])
+      # TMDb release types: 1=Premiere, 2=Theatrical (limited), 3=Theatrical,
+      # 4=Digital, 5=Physical, 6=TV -- prefer an actual cinema release date.
+      for preferred_type in (3, 2, 1):
+        match = next((d for d in dates if d.get("type") == preferred_type), None)
+        if match and match.get("release_date"):
+          release_date = match["release_date"][:10]
+          break
+      else:
+        dated_entries = sorted(d["release_date"] for d in dates if d.get("release_date"))
+        if dated_entries:
+          release_date = dated_entries[0][:10]
 
-    dated_entries = sorted(d["release_date"] for d in dates if d.get("release_date"))
-    if dated_entries:
-      return dated_entries[0][:10]
-
-    return fallback_date
+    return {"release_date": release_date, "poster_path": poster_path}
   except Exception:
     pass
   return None
@@ -1545,15 +1549,15 @@ try:
 
         def _check(title_year):
           title, year = title_year
-          release_date = tmdb_release_date_cached(title, year)
-          if not release_date:
+          result = tmdb_release_date_cached(title, year)
+          if not result or not result.get("release_date"):
             return None
           try:
-            d = datetime.datetime.strptime(release_date, "%Y-%m-%d").date()
+            d = datetime.datetime.strptime(result["release_date"], "%Y-%m-%d").date()
           except ValueError:
             return None
           if d.month == today.month and d.day == today.day:
-            return (title, d.year)
+            return (title, d.year, result.get("poster_path"))
           return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
@@ -1562,8 +1566,14 @@ try:
       matches = sorted((r for r in results if r), key=lambda x: x[1])
 
       if matches:
-        for title, rel_year in matches:
-          st.markdown(f"🎬 **{title}** — released {today.strftime('%B %d')}, {rel_year}")
+        for title, rel_year, poster_path in matches:
+          pcol1, pcol2 = st.columns([1, 3])
+          with pcol1:
+            if poster_path:
+              st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
+          with pcol2:
+            st.markdown(f"🎬 **{title}**")
+            st.caption(f"Released {today.strftime('%B %d')}, {rel_year}")
       else:
         st.info("Nothing in your collection was first released on this date — check back tomorrow!")
 
