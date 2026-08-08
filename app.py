@@ -1,4 +1,5 @@
 import random
+import urllib.parse
 import openpyxl
 import pandas as pd
 import streamlit as st
@@ -99,6 +100,8 @@ st.markdown(
 
     /* Winner card for random picker — marquee spotlight */
     .winner-box {
+        position: relative;
+        overflow: hidden;
         background: linear-gradient(135deg, rgba(108, 92, 232, 0.18), rgba(45, 212, 191, 0.1));
         border: 2px solid var(--amber);
         padding: 20px;
@@ -106,7 +109,52 @@ st.markdown(
         text-align: center;
         margin-top: 15px;
         margin-bottom: 15px;
-        box-shadow: 0 4px 20px rgba(108, 92, 232, 0.15);
+        animation: winner-glow 4s ease-in-out infinite;
+    }
+
+    /* A light sweep across the card, like a marquee catching the light */
+    .winner-box::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -60%;
+        width: 40%;
+        height: 100%;
+        background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+        animation: winner-shimmer 3.6s ease-in-out infinite;
+        pointer-events: none;
+    }
+
+    @keyframes winner-shimmer {
+        0%   { left: -60%; }
+        55%  { left: 130%; }
+        100% { left: 130%; }
+    }
+
+    @keyframes winner-glow {
+        0%, 100% { box-shadow: 0 4px 20px rgba(240, 168, 59, 0.22); border-color: var(--amber); }
+        50%      { box-shadow: 0 4px 24px rgba(108, 92, 232, 0.3); border-color: var(--violet); }
+    }
+
+    /* Format badges — Blu-ray in violet (the laser color), 4K UHD in teal (the shimmer color) */
+    .format-badge {
+        display: inline-block;
+        padding: 1px 9px;
+        border-radius: 20px;
+        font-size: 0.85em;
+        font-weight: 700;
+    }
+    .format-badge.bluray {
+        background: rgba(108, 92, 232, 0.18);
+        color: #A79CFF;
+    }
+    .format-badge.uhd4k {
+        background: rgba(45, 212, 191, 0.18);
+        color: var(--teal);
+    }
+    .format-badge.other {
+        background: rgba(139, 136, 158, 0.18);
+        color: var(--mute);
     }
 
     /* Make buttons touch-friendly and prominent */
@@ -261,6 +309,48 @@ def save_and_sync(filepath):
     )
 
 
+def decode_barcode(image_bytes):
+  """Reads a UPC/EAN barcode from a photo. Returns the code as a string, or
+  None if nothing could be decoded or the pyzbar library isn't installed."""
+  try:
+    from pyzbar.pyzbar import decode as zbar_decode
+    from PIL import Image
+    import io
+    image = Image.open(io.BytesIO(image_bytes))
+    results = zbar_decode(image)
+    if results:
+      return results[0].data.decode("utf-8")
+  except ImportError:
+    st.error(
+        "Barcode scanning needs the pyzbar package installed "
+        "(see requirements.txt / packages.txt)."
+    )
+  except Exception:
+    pass
+  return None
+
+
+def lookup_barcode(code):
+  """Looks up a UPC/EAN code via UPCitemdb's free trial endpoint (no API key
+  needed). Returns {'title': ...} on a match, or None if nothing was found
+  or the request failed -- always safe to fall back to manual entry."""
+  if requests is None:
+    return None
+  try:
+    resp = requests.get(
+        "https://api.upcitemdb.com/prod/trial/lookup",
+        params={"upc": code},
+        timeout=10,
+    )
+    data = resp.json()
+    items = data.get("items", [])
+    if items:
+      return {"title": items[0].get("title", "")}
+  except Exception:
+    pass
+  return None
+
+
 # ----------------------------- helpers -----------------------------------
 
 def safe_year(value):
@@ -295,6 +385,36 @@ def watched_display(value):
   return "Yes" if is_watched(value) else "No"
 
 
+def format_badge_html(format_value):
+  """Small colored pill for Format — violet for Blu-ray, teal for 4K UHD,
+  matching the app's laser-blue / disc-shimmer palette."""
+  if pd.isna(format_value):
+    return ""
+  label = str(format_value).strip()
+  lower = label.lower()
+  if "4k" in lower:
+    css_class = "uhd4k"
+  elif "blu" in lower:
+    css_class = "bluray"
+  else:
+    css_class = "other"
+  return f'<span class="format-badge {css_class}">{label}</span>'
+
+
+def retailer_search_links(title):
+  """Search-page links for a title, one tap instead of typing it out each
+  time. HMV/Zavvi don't have a documented simple search URL, so those go via
+  a site-scoped Google search (same idea as the IMDb/RT lookup links already
+  in your Ratings sheet); Amazon's search URL format is well-established so
+  that one links directly."""
+  quoted = urllib.parse.quote_plus(title)
+  return {
+      "HMV": f"https://www.google.com/search?q=site:hmv.com+{quoted}",
+      "Zavvi": f"https://www.google.com/search?q=site:zavvi.com+{quoted}",
+      "Amazon": f"https://www.amazon.co.uk/s?k={quoted}",
+  }
+
+
 def rating_stars_display(rating_val):
   """Turn a raw Rating cell into a star string, or a neutral placeholder if unset."""
   if pd.isna(rating_val) or str(rating_val).strip() == "":
@@ -327,6 +447,30 @@ def curated_browse_view(df):
   return view.reset_index(drop=True)
 
 
+def style_format_column(df):
+  """Colors the Format column violet for Blu-ray / teal for 4K UHD, matching
+  the app's palette. Returns a Styler; falls back to the plain DataFrame if
+  the installed pandas version doesn't support cell styling."""
+  if "Format" not in df.columns:
+    return df
+
+  def _color(value):
+    lower = str(value).lower()
+    if "4k" in lower:
+      return "color: #2DD4BF; font-weight: 700;"
+    if "blu" in lower:
+      return "color: #A79CFF; font-weight: 700;"
+    return ""
+
+  try:
+    return df.style.map(_color, subset=["Format"])
+  except AttributeError:
+    try:
+      return df.style.applymap(_color, subset=["Format"])
+    except Exception:
+      return df
+
+
 def find_row_by_id(sheet, id_column, target_id, header_row=4):
   """Scan a sheet for the row whose id_column matches target_id."""
   for r in range(header_row, sheet.max_row + 1):
@@ -335,6 +479,50 @@ def find_row_by_id(sheet, id_column, target_id, header_row=4):
     ).strip():
       return r
   return None
+
+
+def get_col_index(sheet, header_name, header_row=4):
+  """Finds a column's position by its header text instead of a hardcoded
+  number, so writes stay correct even if the sheet's columns get reordered."""
+  for c in range(1, sheet.max_column + 1):
+    if str(sheet.cell(row=header_row, column=c).value).strip() == header_name:
+      return c
+  return None
+
+
+def add_to_collection(fields):
+  """Adds a new film to the Collection sheet. fields is a dict of
+  {header_name: value} -- only columns that exist in the sheet get written,
+  so this stays safe even if the sheet's structure changes."""
+  book = openpyxl.load_workbook(FILE_PATH)
+  sheet = book["Collection"]
+  next_row = sheet.max_row + 1
+
+  film_id_col = get_col_index(sheet, "Film ID") or 1
+  sheet.cell(row=next_row, column=film_id_col, value=next_film_id(collection_df))
+
+  for header_name, value in fields.items():
+    if value in (None, ""):
+      continue
+    col = get_col_index(sheet, header_name)
+    if col:
+      sheet.cell(row=next_row, column=col, value=value)
+
+  book.save(FILE_PATH)
+  save_and_sync(FILE_PATH)
+
+
+def delete_from_collection(film_id):
+  """Removes a film from the Collection sheet entirely."""
+  book = openpyxl.load_workbook(FILE_PATH)
+  sheet = book["Collection"]
+  target_row = find_row_by_id(sheet, id_column=1, target_id=film_id)
+  if not target_row:
+    return False
+  sheet.delete_rows(target_row)
+  book.save(FILE_PATH)
+  save_and_sync(FILE_PATH)
+  return True
 
 
 def stars_to_number(star_string):
@@ -572,7 +760,7 @@ try:
       for _, picked_movie in picked_rows.iterrows():
         p_title = picked_movie.get("Title", "Unknown")
         p_year_str = safe_year(picked_movie.get("Year", ""))
-        p_format = picked_movie.get("Format", "Blu-ray")
+        p_format_badge = format_badge_html(picked_movie.get("Format", "Blu-ray"))
         p_genre = picked_movie.get("Genre", "N/A")
         p_director = picked_movie.get("Director", "N/A")
         p_id = picked_movie.get("Film ID", "")
@@ -586,7 +774,7 @@ try:
                     <h3 style="color: #F0A83B; margin-bottom: 2px;">🎉 Tonight's Pick:</h3>
                     <h2 style="margin: 0px;">{p_title} ({p_year_str})</h2>
                     <p style="font-size: 0.95em; margin-top: 8px; opacity: 0.85;">
-                        <b>Format:</b> {p_format} | <b>Director:</b> {p_director}<br>
+                        {p_format_badge} &nbsp;<b>Director:</b> {p_director}<br>
                         <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
                         <b>Rating:</b> {p_rating_display}
                     </p>
@@ -655,7 +843,7 @@ try:
           st.rerun()
       else:
         st.success(f"Found {len(results)} matches:")
-        st.dataframe(curated_browse_view(results), use_container_width=True, hide_index=True)
+        st.dataframe(style_format_column(curated_browse_view(results)), use_container_width=True, hide_index=True)
     else:
       st.info("Type a keyword above to find a film.")
 
@@ -719,10 +907,97 @@ try:
           else:
             st.error("Couldn't find that film in the sheet to update.")
 
+      with st.expander("🗑️ Remove this film from my collection"):
+        st.warning(f"This permanently deletes '{selected_movie}' from your Collection sheet.")
+        confirm_delete = st.checkbox("Yes, I'm sure", key=f"confirm_del_{selected_id}")
+        if st.button("Remove permanently", key=f"remove_btn_{selected_id}", disabled=not confirm_delete):
+          if delete_from_collection(selected_id):
+            st.cache_data.clear()
+            st.success(f"Removed '{selected_movie}' from your collection.")
+            st.rerun()
+          else:
+            st.error("Couldn't find that film in the sheet to remove.")
+
+    film_divider()
+    st.markdown("**➕ Add a Film**")
+
+    add_tab1, add_tab2 = st.tabs(["Type it in", "📷 Scan barcode"])
+
+    with add_tab1:
+      with st.form("manual_add_form", clear_on_submit=True):
+        m_title = st.text_input("Title *")
+        mcol1, mcol2 = st.columns(2)
+        with mcol1:
+          m_year = st.number_input("Year", min_value=1900, max_value=2100, value=2020, step=1)
+        with mcol2:
+          m_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"])
+        m_genre = st.text_input("Genre (optional)")
+        m_director = st.text_input("Director (optional)")
+        m_notes = st.text_input("Notes (optional)")
+
+        if st.form_submit_button("💾 Add to Collection"):
+          if m_title:
+            add_to_collection({
+                "Title": m_title,
+                "Year": m_year,
+                "Format": m_format,
+                "Genre": m_genre,
+                "Director": m_director,
+                "Notes": m_notes,
+                "Watched": "No",
+            })
+            st.cache_data.clear()
+            st.success(f"Added '{m_title}' to your collection!")
+            st.rerun()
+          else:
+            st.warning("Title is required.")
+
+    with add_tab2:
+      st.caption("Take a photo of the barcode on the case. Works best with good lighting and the barcode filling most of the frame.")
+      barcode_photo = st.camera_input("Scan barcode", key="barcode_camera")
+
+      if barcode_photo is not None:
+        decoded_code = decode_barcode(barcode_photo.getvalue())
+        if not decoded_code:
+          st.error("Couldn't read a barcode in that photo — try again with the barcode closer and well-lit.")
+        else:
+          st.info(f"Barcode: {decoded_code}")
+          lookup_result = lookup_barcode(decoded_code)
+
+          with st.form("barcode_add_form"):
+            prefill_title = lookup_result.get("title", "") if lookup_result else ""
+            if lookup_result:
+              st.success("Found a match online — check it's right before adding:")
+            else:
+              st.warning("No online match for this barcode — enter the details manually.")
+
+            b_title = st.text_input("Title *", value=prefill_title)
+            bcol1, bcol2 = st.columns(2)
+            with bcol1:
+              b_year = st.number_input("Year", min_value=1900, max_value=2100, value=2020, step=1, key="b_year")
+            with bcol2:
+              b_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"], key="b_format")
+            b_notes = st.text_input("Notes (optional)", value=(f"Barcode: {decoded_code}"))
+
+            if st.form_submit_button("💾 Add to Collection"):
+              if b_title:
+                add_to_collection({
+                    "Title": b_title,
+                    "Year": b_year,
+                    "Format": b_format,
+                    "Notes": b_notes,
+                    "Watched": "No",
+                })
+                st.cache_data.clear()
+                st.success(f"Added '{b_title}' to your collection!")
+                st.rerun()
+              else:
+                st.warning("Title is required.")
+
     film_divider()
     st.markdown("**Your collection**")
     st.dataframe(
-        curated_browse_view(valid_collection),
+        style_format_column(curated_browse_view(valid_collection)),
         use_container_width=True,
         height=350,
         hide_index=True,
@@ -780,6 +1055,15 @@ try:
           buy_clicked = st.button("✅ Bought", key=f"buy_{idx}")
         with wcol3:
           delete_clicked = st.button("🗑️", key=f"del_{idx}")
+
+        links = retailer_search_links(w_title)
+        st.markdown(
+            f"<span style='font-size:0.85em;'>🔗 Check price: "
+            f"<a href='{links['HMV']}' target='_blank'>HMV</a> · "
+            f"<a href='{links['Zavvi']}' target='_blank'>Zavvi</a> · "
+            f"<a href='{links['Amazon']}' target='_blank'>Amazon</a></span>",
+            unsafe_allow_html=True,
+        )
 
         with st.expander("💷 Log a price check"):
           with st.form(f"price_form_{idx}", clear_on_submit=False):
