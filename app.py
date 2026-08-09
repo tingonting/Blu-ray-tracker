@@ -1975,21 +1975,33 @@ try:
 
     film_divider()
 
-    if tmdb_configured() and "Rating (1-5)" in valid_collection.columns:
-      with st.expander("✨ Because you loved these..."):
-        five_star = valid_collection.copy()
-        five_star["_stars"] = five_star["Rating (1-5)"].apply(stars_to_number)
-        five_star = five_star[five_star["_stars"] == 5].head(5)
+    if tmdb_configured():
+      with st.expander("✨ Because you own these..."):
+        rcol1, rcol2 = st.columns([3, 1])
+        with rcol1:
+          st.caption("Pulled from a handful of random picks across your whole collection.")
+        with rcol2:
+          refresh_clicked = st.button("🔄 New picks", key="refresh_recs")
 
-        if five_star.empty:
-          st.caption("Rate some films 5 stars from the Update tab and suggestions will show up here.")
+        if refresh_clicked or "wishlist_rec_sources" not in st.session_state:
+          sample_n = min(5, len(valid_collection))
+          if sample_n > 0:
+            sampled = valid_collection.sample(n=sample_n)
+            st.session_state["wishlist_rec_sources"] = sampled[["Title", "Year"]].to_dict("records")
+          else:
+            st.session_state["wishlist_rec_sources"] = []
+
+        source_rows = st.session_state.get("wishlist_rec_sources", [])
+
+        if not source_rows:
+          st.caption("Add some films to your collection and suggestions will show up here.")
         else:
           owned_titles = set(valid_collection["Title"].dropna().str.strip().str.lower())
           wishlist_titles = set(valid_wishlist["Title"].dropna().str.strip().str.lower()) if not valid_wishlist.empty else set()
 
           seen = set()
           suggestions = []
-          for _, source_row in five_star.iterrows():
+          for source_row in source_rows:
             source_lookup = tmdb_lookup_cached(source_row.get("Title", ""), source_row.get("Year"))
             if not source_lookup or not source_lookup.get("id"):
               continue
@@ -2004,7 +2016,7 @@ try:
               break
 
           if not suggestions:
-            st.caption("No new suggestions right now — try rating a few more films 5 stars.")
+            st.caption("No new suggestions from these picks — try refreshing for a different set.")
           else:
             for rec in suggestions[:10]:
               rcol1, rcol2 = st.columns([1, 3])
