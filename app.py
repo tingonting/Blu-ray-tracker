@@ -1,4 +1,5 @@
 import random
+import streamlit.components.v1 as components
 import difflib
 import re
 import urllib.parse
@@ -208,6 +209,54 @@ st.markdown(
     }
     div[data-baseweb="tab-highlight"] {
         background-color: var(--teal) !important;
+    }
+
+    /* Rating stars -- consistent amber styling wherever a rating is
+       displayed as text, rather than however the phone's own emoji font
+       happens to render a bare star character. */
+    .stars-display {
+        color: var(--amber);
+        letter-spacing: 0.08em;
+        font-size: 1.05em;
+        text-shadow: 0 0 8px rgba(240, 168, 59, 0.35);
+    }
+
+    /* Micro-interactions: buttons lift slightly on hover, settle on press,
+       instead of the flat instant state-change of a default button. */
+    .stButton button {
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .stButton button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 14px rgba(108, 92, 232, 0.35);
+    }
+    .stButton button:active {
+        transform: translateY(0px) scale(0.97);
+    }
+
+    /* Themed loading spinner instead of Streamlit's default color */
+    div[data-testid="stSpinner"] svg {
+        color: var(--violet) !important;
+    }
+
+    /* Scrollbar, restyled to match the theme instead of the browser default */
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+    ::-webkit-scrollbar-track {
+        background: var(--ink);
+    }
+    ::-webkit-scrollbar-thumb {
+        background: var(--violet);
+        border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--teal);
+    }
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--violet) var(--ink);
     }
     </style>
 """,
@@ -1214,6 +1263,46 @@ try:
       "<div class='app-subtitle'>Mobile Media Companion</div>",
       unsafe_allow_html=True,
   )
+
+  # Injects a proper home-screen icon for iOS/Android "Add to Home Screen",
+  # since Streamlit's page_icon only sets the browser tab favicon, not the
+  # icon used when saving the app to a phone's home screen. Works by
+  # reaching into the parent page's <head> from an invisible iframe -- a
+  # known Streamlit community technique, not an official API, so it's
+  # best-effort rather than guaranteed on every browser/version.
+  _icon_svg = (
+      '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">'
+      '<defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">'
+      '<stop offset="0%" stop-color="#6C5CE8"/><stop offset="100%" stop-color="#2DD4BF"/>'
+      '</linearGradient></defs>'
+      '<rect width="180" height="180" rx="38" fill="url(#g)"/>'
+      '<circle cx="90" cy="90" r="54" fill="#0A0B14"/>'
+      '<circle cx="90" cy="90" r="54" fill="none" stroke="#F0A83B" stroke-width="5"/>'
+      '<circle cx="90" cy="90" r="13" fill="#F0A83B"/>'
+      '</svg>'
+  )
+  _icon_data_uri = "data:image/svg+xml;base64," + base64.b64encode(_icon_svg.encode()).decode()
+  components.html(
+      f"""
+      <script>
+      (function() {{
+        var head = window.parent.document.head;
+        if (!head.querySelector("link[rel='apple-touch-icon']")) {{
+          var link1 = document.createElement('link');
+          link1.rel = 'apple-touch-icon';
+          link1.href = '{_icon_data_uri}';
+          head.appendChild(link1);
+          var link2 = document.createElement('link');
+          link2.rel = 'icon';
+          link2.href = '{_icon_data_uri}';
+          head.appendChild(link2);
+        }}
+      }})();
+      </script>
+      """,
+      height=0,
+  )
+
   if github_sync_configured():
     st.markdown(
         "<p style='text-align:center; font-size:0.75em; color:var(--teal); "
@@ -1390,7 +1479,7 @@ try:
                     <p style="font-size: 0.95em; margin-top: 8px; opacity: 0.85;">
                         {p_format_badge} &nbsp;<b>Director:</b> {p_director}<br>
                         <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
-                        <b>Rating:</b> {p_rating_display}{p_last_watched_html}
+                        <b>Rating:</b> <span class="stars-display">{p_rating_display}</span>{p_last_watched_html}
                     </p>
                     {p_plot_html}
                 </div>
@@ -2318,7 +2407,7 @@ try:
             title = rrow.get("Title", "Unknown")
             year_str = safe_year(rrow.get("Year", ""))
             stars = rating_stars_display(rrow.get("Rating (1-5)"))
-            st.markdown(f"{stars} — **{title}** ({year_str})")
+            st.markdown(f"<span class='stars-display'>{stars}</span> — **{title}** ({year_str})", unsafe_allow_html=True)
       else:
         st.dataframe(ratings_df, use_container_width=True, height=300)
 
