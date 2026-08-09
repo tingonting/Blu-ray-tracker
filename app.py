@@ -2056,7 +2056,9 @@ try:
             )
           film_divider()
 
-      for idx, row in valid_wishlist.iterrows():
+      for idx, row in valid_wishlist.assign(
+          _priority_sort=pd.to_numeric(valid_wishlist.get("Priority (1-5)"), errors="coerce").fillna(0)
+      ).sort_values(by="_priority_sort", ascending=False).iterrows():
         w_title = row.get("Title", "Untitled")
         w_priority = row.get("Priority (1-5)", "")
         w_target = row.get("Target Price (£)", None)
@@ -2090,6 +2092,24 @@ try:
             f"<a href='{links['CEX']}' target='_blank'>CEX</a></span>",
             unsafe_allow_html=True,
         )
+
+        with st.expander("🎚️ Change priority"):
+          with st.form(f"priority_form_{idx}", clear_on_submit=False):
+            new_priority_value = st.slider(
+                "Priority (1-5)", 1, 5,
+                value=int(w_priority) if pd.notna(w_priority) and str(w_priority).strip() else 3,
+                key=f"priority_slider_{idx}",
+            )
+            if st.form_submit_button("Save priority"):
+              book = openpyxl.load_workbook(FILE_PATH)
+              wish_sheet = book["Wishlist"]
+              excel_row = idx + 5
+              wish_sheet.cell(row=excel_row, column=3, value=new_priority_value)
+              book.save(FILE_PATH)
+              save_and_sync(FILE_PATH)
+              st.cache_data.clear()
+              st.success(f"Updated priority for '{w_title}' to {new_priority_value}.")
+              st.rerun()
 
         with st.expander("💷 Log a price check"):
           with st.form(f"price_form_{idx}", clear_on_submit=False):
