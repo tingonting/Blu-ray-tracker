@@ -366,87 +366,6 @@ def tmdb_recommendations_cached(movie_id):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def tmdb_collection_films_cached(collection_name):
-  """The full canonical list of films in a franchise, via TMDb's Collections
-  API -- used for 'Collection Gaps' to know exactly which titles are
-  missing, not just how many. Returns a list of {'title':..., 'year':...}
-  or [] if no confident match was found (best-effort: your franchise names
-  like 'Wizarding World' don't always map 1:1 onto a single TMDb collection,
-  so this can legitimately come back empty for some)."""
-  if requests is None or not tmdb_configured():
-    return []
-  try:
-    api_key = st.secrets["tmdb"]["api_key"]
-    search_resp = requests.get(
-        "https://api.themoviedb.org/3/search/collection",
-        params={"api_key": api_key, "query": collection_name},
-        timeout=8,
-    )
-    search_results = search_resp.json().get("results", [])
-    if not search_results:
-      return []
-    collection_id = search_results[0]["id"]
-
-    detail_resp = requests.get(
-        f"https://api.themoviedb.org/3/collection/{collection_id}",
-        params={"api_key": api_key},
-        timeout=8,
-    )
-    parts = detail_resp.json().get("parts", [])
-    out = []
-    for p in parts:
-      release_date = p.get("release_date", "") or ""
-      out.append({
-          "title": p.get("title", ""),
-          "year": int(release_date[:4]) if release_date[:4].isdigit() else None,
-      })
-    return out
-  except Exception:
-    return []
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def tmdb_director_filmography_cached(director_name):
-  """A director's full directing filmography via TMDb's person credits --
-  used for 'Collection Gaps' on the People page. Returns a list of
-  {'title':..., 'year':...} or [] if the person can't be confidently
-  matched or has no directing credits on file."""
-  if requests is None or not tmdb_configured():
-    return []
-  try:
-    api_key = st.secrets["tmdb"]["api_key"]
-    search_resp = requests.get(
-        "https://api.themoviedb.org/3/search/person",
-        params={"api_key": api_key, "query": director_name},
-        timeout=8,
-    )
-    search_results = search_resp.json().get("results", [])
-    if not search_results:
-      return []
-    person_id = search_results[0]["id"]
-
-    credits_resp = requests.get(
-        f"https://api.themoviedb.org/3/person/{person_id}/movie_credits",
-        params={"api_key": api_key},
-        timeout=8,
-    )
-    crew = credits_resp.json().get("crew", [])
-    out = []
-    for c in crew:
-      if c.get("job") != "Director":
-        continue
-      release_date = c.get("release_date", "") or ""
-      out.append({
-          "title": c.get("title", ""),
-          "year": int(release_date[:4]) if release_date[:4].isdigit() else None,
-      })
-    out.sort(key=lambda x: x["year"] or 9999)
-    return out
-  except Exception:
-    return []
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
 def tmdb_trailer_cached(movie_id):
   """YouTube video key for the film's trailer, or None. Prefers an official
   Trailer, falls back to any Trailer, then a Teaser -- returns None rather
@@ -687,56 +606,6 @@ def find_possible_duplicates(title, threshold=0.82):
     if ratio >= threshold:
       matches.append((existing_title, row.get("Year")))
   return matches
-
-
-def normalize_title_for_match(title):
-  """Strips punctuation and subtitle separators so titles like 'Star Wars'
-  and 'Star Wars: Episode IV - A New Hope' can be recognized as the same
-  film despite very different formatting between TMDb and a personal
-  spreadsheet."""
-  t = str(title).strip().lower()
-  t = re.sub(r"[:\-–—.,!?()]", " ", t)
-  t = re.sub(r"\s+", " ", t).strip()
-  return t
-
-
-def titles_likely_match(title_a, title_b):
-  """True if two titles are probably the same film -- exact match after
-  normalizing, one containing the other (for cases like TMDb's bare 'Star
-  Wars' vs a spreadsheet's full 'Star Wars: Episode IV - A New Hope'), or
-  close enough by fuzzy ratio to catch minor differences."""
-  norm_a = normalize_title_for_match(title_a)
-  norm_b = normalize_title_for_match(title_b)
-  if not norm_a or not norm_b:
-    return False
-  if norm_a == norm_b:
-    return True
-  shorter, longer = (norm_a, norm_b) if len(norm_a) <= len(norm_b) else (norm_b, norm_a)
-  if shorter in longer and len(shorter) >= 6:
-    return True
-  return difflib.SequenceMatcher(None, norm_a, norm_b).ratio() >= 0.85
-
-
-def find_missing_titles(canonical_films, owned_titles):
-  """Diffs a canonical film list (from TMDb) against the collection's owned
-  titles, using fuzzy/substring matching rather than exact string equality
-  -- TMDb's titles frequently don't exactly match how a personal
-  spreadsheet stores them. owned_titles is a list/collection of raw owned
-  title strings (not pre-normalized). Returns the films from the canonical
-  list that don't appear to be owned -- used for Collection Gaps on both
-  Franchises and People pages."""
-  missing = []
-  seen = set()
-  owned_list = list(owned_titles)
-  for f in canonical_films:
-    norm = normalize_title_for_match(f["title"])
-    if norm in seen:
-      continue
-    if any(titles_likely_match(f["title"], owned_title) for owned_title in owned_list):
-      continue
-    seen.add(norm)
-    missing.append(f)
-  return missing
 
 
 def lookup_barcode(code):
@@ -2388,7 +2257,6 @@ try:
         )
 
         st.markdown("**📦 Box Set Completion**")
-        owned_titles_list = valid_collection["Title"].dropna().tolist()
         for _, srow in sets_progress.iterrows():
           owned = int(srow["Owned"])
           target = int(srow["Target"])
@@ -2401,37 +2269,6 @@ try:
             label += f" ({missing} to go)"
           st.markdown(label)
           st.progress(pct)
-
-          if missing > 0 and tmdb_configured():
-            gap_key = f"franchise_gap_{srow['Collection']}"
-            if st.button("🔍 Show missing films", key=f"gap_btn_{srow['Collection']}"):
-              st.session_state[gap_key] = not st.session_state.get(gap_key, False)
-
-            if st.session_state.get(gap_key):
-              canonical_films = tmdb_collection_films_cached(srow["Collection"])
-              if not canonical_films:
-                st.caption("No confident TMDb match for this collection name — can't list exact titles.")
-              else:
-                missing_films = find_missing_titles(canonical_films, owned_titles_list)
-                if not missing_films:
-                  st.caption("TMDb doesn't show any films beyond what you already own.")
-                else:
-                  st.caption(
-                      "Note: TMDb sometimes splits a long-running franchise into "
-                      "several separate collections (e.g. original vs. rebooted "
-                      "eras), so this may not always add up to your Target Films "
-                      "count exactly."
-                  )
-                  for mf in missing_films:
-                    gcol1, gcol2 = st.columns([3, 1])
-                    with gcol1:
-                      st.markdown(f"　　• {mf['title']} ({mf['year'] or '—'})")
-                    with gcol2:
-                      if st.button("+ Wishlist", key=f"gap_add_{srow['Collection']}_{mf['title']}"):
-                        add_to_wishlist(mf["title"])
-                        st.cache_data.clear()
-                        st.success(f"Added '{mf['title']}'!")
-                        st.rerun()
         film_divider()
 
       st.dataframe(franchise_df, use_container_width=True, height=300)
@@ -2527,32 +2364,6 @@ try:
             if pd.notna(films_text):
               st.markdown(films_text)
 
-          if person_type == "Director" and tmdb_configured():
-            dir_gap_key = f"director_gap_{selected_name}"
-            if st.button("🔍 Show missing films", key=f"dir_gap_btn_{selected_name}"):
-              st.session_state[dir_gap_key] = not st.session_state.get(dir_gap_key, False)
-
-            if st.session_state.get(dir_gap_key):
-              filmography = tmdb_director_filmography_cached(selected_name)
-              if not filmography:
-                st.caption("No confident TMDb match for this director.")
-              else:
-                owned_titles_list = valid_collection["Title"].dropna().tolist()
-                missing_films = find_missing_titles(filmography, owned_titles_list)
-                if not missing_films:
-                  st.caption(f"You appear to own everything TMDb lists for {selected_name}!")
-                else:
-                  st.markdown(f"**Missing from your {selected_name} collection:**")
-                  for mf in missing_films:
-                    gcol1, gcol2 = st.columns([3, 1])
-                    with gcol1:
-                      st.markdown(f"　　• {mf['title']} ({mf['year'] or '—'})")
-                    with gcol2:
-                      if st.button("+ Wishlist", key=f"dir_gap_add_{selected_name}_{mf['title']}"):
-                        add_to_wishlist(mf["title"])
-                        st.cache_data.clear()
-                        st.success(f"Added '{mf['title']}'!")
-                        st.rerun()
 
     with sub_tab5:
       st.subheader("🏅 Milestones & Achievements")
