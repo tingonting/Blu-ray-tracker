@@ -1321,7 +1321,7 @@ try:
   app_mode = st.tabs([
       "🏠 Home",
       "🔍 Search",
-      "📚 Update",
+      "📚 Collection",
       "🛒 Wishlist",
       "📊 Stats",
       "🏆 Extras",
@@ -1955,6 +1955,26 @@ try:
   with app_mode[3]:
     st.subheader("🛒 Wishlist")
 
+    st.markdown("### ➕ Add to Wishlist")
+    with st.form("wishlist_form", clear_on_submit=True):
+      new_title = st.text_input("Title *")
+      new_priority = st.slider("Priority (1-5)", 1, 5, 3)
+      new_target_price = st.number_input(
+          "Target Price (£)", min_value=0.0, value=15.00, step=0.50
+      )
+      new_notes = st.text_input("Notes")
+
+      if st.form_submit_button("💾 Add Film"):
+        if new_title:
+          add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
+          st.cache_data.clear()
+          st.success(f"Added '{new_title}'!")
+          st.rerun()
+        else:
+          st.warning("Title is required.")
+
+    film_divider()
+
     if tmdb_configured() and "Rating (1-5)" in valid_collection.columns:
       with st.expander("✨ Because you loved these..."):
         five_star = valid_collection.copy()
@@ -2122,25 +2142,7 @@ try:
           st.info(f"Removed '{w_title}' from wishlist.")
           st.rerun()
     else:
-      st.info("Your wishlist is empty — add something below!")
-
-    st.markdown("### Add to Wishlist")
-    with st.form("wishlist_form", clear_on_submit=True):
-      new_title = st.text_input("Title *")
-      new_priority = st.slider("Priority (1-5)", 1, 5, 3)
-      new_target_price = st.number_input(
-          "Target Price (£)", min_value=0.0, value=15.00, step=0.50
-      )
-      new_notes = st.text_input("Notes")
-
-      if st.form_submit_button("💾 Add Film"):
-        if new_title:
-          add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
-          st.cache_data.clear()
-          st.success(f"Added '{new_title}'!")
-          st.rerun()
-        else:
-          st.warning("Title is required.")
+      st.info("Your wishlist is empty — add something above!")
 
   # --- TAB 5: STATS ---
   with app_mode[4]:
