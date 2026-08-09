@@ -366,6 +366,87 @@ def tmdb_recommendations_cached(movie_id):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
+def tmdb_collection_films_cached(collection_name):
+  """The full canonical list of films in a franchise, via TMDb's Collections
+  API -- used for 'Collection Gaps' to know exactly which titles are
+  missing, not just how many. Returns a list of {'title':..., 'year':...}
+  or [] if no confident match was found (best-effort: your franchise names
+  like 'Wizarding World' don't always map 1:1 onto a single TMDb collection,
+  so this can legitimately come back empty for some)."""
+  if requests is None or not tmdb_configured():
+    return []
+  try:
+    api_key = st.secrets["tmdb"]["api_key"]
+    search_resp = requests.get(
+        "https://api.themoviedb.org/3/search/collection",
+        params={"api_key": api_key, "query": collection_name},
+        timeout=8,
+    )
+    search_results = search_resp.json().get("results", [])
+    if not search_results:
+      return []
+    collection_id = search_results[0]["id"]
+
+    detail_resp = requests.get(
+        f"https://api.themoviedb.org/3/collection/{collection_id}",
+        params={"api_key": api_key},
+        timeout=8,
+    )
+    parts = detail_resp.json().get("parts", [])
+    out = []
+    for p in parts:
+      release_date = p.get("release_date", "") or ""
+      out.append({
+          "title": p.get("title", ""),
+          "year": int(release_date[:4]) if release_date[:4].isdigit() else None,
+      })
+    return out
+  except Exception:
+    return []
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def tmdb_director_filmography_cached(director_name):
+  """A director's full directing filmography via TMDb's person credits --
+  used for 'Collection Gaps' on the People page. Returns a list of
+  {'title':..., 'year':...} or [] if the person can't be confidently
+  matched or has no directing credits on file."""
+  if requests is None or not tmdb_configured():
+    return []
+  try:
+    api_key = st.secrets["tmdb"]["api_key"]
+    search_resp = requests.get(
+        "https://api.themoviedb.org/3/search/person",
+        params={"api_key": api_key, "query": director_name},
+        timeout=8,
+    )
+    search_results = search_resp.json().get("results", [])
+    if not search_results:
+      return []
+    person_id = search_results[0]["id"]
+
+    credits_resp = requests.get(
+        f"https://api.themoviedb.org/3/person/{person_id}/movie_credits",
+        params={"api_key": api_key},
+        timeout=8,
+    )
+    crew = credits_resp.json().get("crew", [])
+    out = []
+    for c in crew:
+      if c.get("job") != "Director":
+        continue
+      release_date = c.get("release_date", "") or ""
+      out.append({
+          "title": c.get("title", ""),
+          "year": int(release_date[:4]) if release_date[:4].isdigit() else None,
+      })
+    out.sort(key=lambda x: x["year"] or 9999)
+    return out
+  except Exception:
+    return []
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def tmdb_trailer_cached(movie_id):
   """YouTube video key for the film's trailer, or None. Prefers an official
   Trailer, falls back to any Trailer, then a Teaser -- returns None rather
@@ -495,6 +576,48 @@ def sync_to_github(filepath):
     return False
 
 
+def backup_to_github(filepath, reason="backup"):
+  """Pushes a timestamped snapshot of the current workbook to a backups/
+  folder in your repo, separate from the live file -- used before
+  destructive operations (deleting a film, bulk backfills) so there's
+  always a way back if something goes wrong. Always writes as a brand-new
+  file (unique timestamped name), so unlike sync_to_github this never needs
+  to look up an existing sha first. Silently does nothing if GitHub isn't
+  configured -- this is a bonus safety net, not something that should ever
+  block the actual operation from completing."""
+  if requests is None or not github_sync_configured():
+    return False
+  try:
+    cfg = st.secrets["github"]
+    token = cfg["token"]
+    repo = cfg["repo"]
+    branch = cfg.get("branch", "main")
+
+    timestamp = pd.Timestamp.now().strftime("%Y%m%d-%H%M%S")
+    safe_reason = re.sub(r"[^a-zA-Z0-9_-]", "-", reason)
+    backup_path = f"backups/{timestamp}-{safe_reason}.xlsx"
+
+    api_url = f"https://api.github.com/repos/{repo}/contents/{backup_path}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    with open(filepath, "rb") as f:
+      content_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    payload = {
+        "message": f"Backup before {reason} — {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
+        "content": content_b64,
+        "branch": branch,
+    }
+
+    put_resp = requests.put(api_url, headers=headers, json=payload, timeout=15)
+    return put_resp.status_code in (200, 201)
+  except Exception:
+    return False
+
+
 def save_and_sync(filepath):
   """The full save pipeline: recalculate formulas, then push to GitHub for
   durable cloud storage. Call this right after book.save(filepath)."""
@@ -564,6 +687,22 @@ def find_possible_duplicates(title, threshold=0.82):
     if ratio >= threshold:
       matches.append((existing_title, row.get("Year")))
   return matches
+
+
+def find_missing_titles(canonical_films, owned_titles_norm_set):
+  """Diffs a canonical film list (from TMDb) against a set of already-
+  normalized (stripped, lowercased) owned titles. Returns the films from
+  the canonical list that don't appear to be owned -- used for Collection
+  Gaps on both Franchises and People pages."""
+  missing = []
+  seen = set()
+  for f in canonical_films:
+    norm = f["title"].strip().lower()
+    if norm in owned_titles_norm_set or norm in seen:
+      continue
+    seen.add(norm)
+    missing.append(f)
+  return missing
 
 
 def lookup_barcode(code):
@@ -872,6 +1011,8 @@ def backfill_missing_details(films_to_process):
   with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
     lookups = list(executor.map(_lookup, films_to_process))
 
+  backup_to_github(FILE_PATH, reason="bulk-backfill")
+
   book = openpyxl.load_workbook(FILE_PATH)
   sheet = book["Collection"]
 
@@ -969,7 +1110,11 @@ def add_to_collection(fields, full_cast=None):
 
 
 def delete_from_collection(film_id):
-  """Removes a film from the Collection sheet entirely."""
+  """Removes a film from the Collection sheet entirely. Takes a timestamped
+  GitHub backup first, since this is destructive and can't be undone
+  through the app itself."""
+  backup_to_github(FILE_PATH, reason=f"delete-{film_id}")
+
   book = openpyxl.load_workbook(FILE_PATH)
   sheet = book["Collection"]
   target_row = find_row_by_id(sheet, id_column=1, target_id=film_id)
@@ -987,16 +1132,46 @@ def stars_to_number(star_string):
   return count if count > 0 else None
 
 
+def append_watch_log(book, film_id, title, date_str, rating_value=None):
+  """Adds one entry to the Watch Log sheet, creating it (with a header row
+  matching the rest of the workbook's row-4 convention) if it doesn't exist
+  yet. Unlike Collection's single 'Date Watched' cell, this keeps every
+  watch as its own row, so the same film can be watched multiple times."""
+  if "Watch Log" not in book.sheetnames:
+    ws = book.create_sheet("Watch Log")
+    ws.cell(row=4, column=1, value="Film ID")
+    ws.cell(row=4, column=2, value="Title")
+    ws.cell(row=4, column=3, value="Date Watched")
+    ws.cell(row=4, column=4, value="Rating at Time")
+  else:
+    ws = book["Watch Log"]
+
+  next_row = ws.max_row + 1
+  ws.cell(row=next_row, column=1, value=film_id)
+  ws.cell(row=next_row, column=2, value=title)
+  ws.cell(row=next_row, column=3, value=date_str)
+  numeric_rating = stars_to_number(rating_value) if rating_value else None
+  if numeric_rating is not None:
+    ws.cell(row=next_row, column=4, value=numeric_rating)
+
+
 def save_collection_update(film_id, watched_value, rating_value, date_watched=None):
   """Writes Watched + Rating to the Collection sheet, and mirrors the
   numeric rating into the Ratings sheet's 'Your Rating /5' column so the
   two stay in sync. date_watched is only written when the film is marked
-  Watched -- pass None to leave it untouched (e.g. when unmarking)."""
+  Watched -- pass None to leave it untouched (e.g. when unmarking).
+
+  Also logs a Watch Log entry, but ONLY when the date actually changed from
+  what was already stored -- otherwise just resaving a rating edit (without
+  a genuinely new watch) would create a phantom log entry every time."""
   book = openpyxl.load_workbook(FILE_PATH)
   coll_sheet = book["Collection"]
   target_row = find_row_by_id(coll_sheet, id_column=1, target_id=film_id)
   if not target_row:
     return False
+
+  title_col = get_col_index(coll_sheet, "Title")
+  film_title = coll_sheet.cell(row=target_row, column=title_col).value if title_col else ""
 
   coll_sheet.cell(row=target_row, column=7, value=watched_value)
   coll_sheet.cell(row=target_row, column=8, value=rating_value)
@@ -1004,6 +1179,12 @@ def save_collection_update(film_id, watched_value, rating_value, date_watched=No
   if is_watched(watched_value) and date_watched:
     date_col = ensure_column(coll_sheet, "Date Watched")
     date_str = date_watched.strftime("%Y-%m-%d") if hasattr(date_watched, "strftime") else str(date_watched)
+    old_date_val = coll_sheet.cell(row=target_row, column=date_col).value
+    old_date_str = str(old_date_val)[:10] if old_date_val else None
+
+    if date_str != old_date_str:
+      append_watch_log(book, film_id, film_title, date_str, rating_value)
+
     coll_sheet.cell(row=target_row, column=date_col, value=date_str)
 
   if "Ratings" in book.sheetnames:
@@ -1030,6 +1211,17 @@ def load_data():
   directors_df = pd.read_excel(FILE_PATH, sheet_name="Directors", skiprows=3)
   awards_df = pd.read_excel(FILE_PATH, sheet_name="Awards", skiprows=3)
   ratings_df = pd.read_excel(FILE_PATH, sheet_name="Ratings", skiprows=3)
+
+  # Watch Log doesn't exist in the original spreadsheet -- it's created the
+  # first time a watch gets logged, so read it defensively.
+  wb_check = openpyxl.load_workbook(FILE_PATH, read_only=True)
+  has_watch_log = "Watch Log" in wb_check.sheetnames
+  wb_check.close()
+  if has_watch_log:
+    watch_log_df = pd.read_excel(FILE_PATH, sheet_name="Watch Log", skiprows=3)
+  else:
+    watch_log_df = pd.DataFrame(columns=["Film ID", "Title", "Date Watched", "Rating at Time"])
+
   return (
       collection_df,
       wishlist_df,
@@ -1038,6 +1230,7 @@ def load_data():
       directors_df,
       awards_df,
       ratings_df,
+      watch_log_df,
   )
 
 
@@ -1093,6 +1286,7 @@ try:
       directors_df,
       awards_df,
       ratings_df,
+      watch_log_df,
   ) = load_data()
 
   valid_collection = collection_df.dropna(subset=["Title"]).copy()
@@ -1491,6 +1685,41 @@ try:
             st.success(f"Saved '{selected_movie}'!")
             if new_rating_stars == STAR_OPTIONS[-1]:
               st.balloons()
+            st.rerun()
+          else:
+            st.error("Couldn't find that film in the sheet to update.")
+
+      film_log = (
+          watch_log_df[watch_log_df["Film ID"].astype(str) == str(selected_id)]
+          if "Film ID" in watch_log_df.columns else pd.DataFrame()
+      )
+      if not film_log.empty:
+        log_dates = pd.to_datetime(film_log["Date Watched"], errors="coerce").dropna().sort_values()
+        if not log_dates.empty:
+          times_watched = len(log_dates)
+          first_watched = log_dates.min()
+          last_watched = log_dates.max()
+          years_since_last = (pd.Timestamp.today() - last_watched).days / 365.25
+          age_note = f" ({years_since_last:.1f} years ago)" if years_since_last >= 1 else ""
+          st.caption(
+              f"📼 Watched **{times_watched}** time{'s' if times_watched != 1 else ''} — "
+              f"first {first_watched.strftime('%d/%m/%Y')}, last {last_watched.strftime('%d/%m/%Y')}{age_note}"
+          )
+
+      with st.expander("📼 Log a rewatch"):
+        st.caption("For logging an additional watch without changing today's Watched/Rating fields above.")
+        rewatch_date = st.date_input("Date watched", value=datetime.date.today(), key=f"rewatch_date_{selected_id}")
+        rewatch_rating_choice = st.selectbox(
+            "Rating at this watch", ["(keep current rating)"] + STAR_OPTIONS, key=f"rewatch_rating_{selected_id}"
+        )
+        if st.button("Log this watch", key=f"log_rewatch_{selected_id}"):
+          rating_to_use = (
+              STAR_OPTIONS[default_star_index] if rewatch_rating_choice == "(keep current rating)"
+              else rewatch_rating_choice
+          )
+          if save_collection_update(selected_id, "Yes", rating_to_use, rewatch_date):
+            st.cache_data.clear()
+            st.success(f"Logged a watch of '{selected_movie}' on {rewatch_date.strftime('%d/%m/%Y')}!")
             st.rerun()
           else:
             st.error("Couldn't find that film in the sheet to update.")
@@ -1924,52 +2153,90 @@ try:
     st.subheader("📊 Collection Insights")
 
     st.markdown("### 🎊 Yearly Rewind")
-    if "Date Watched" not in valid_collection.columns:
+
+    def build_watch_events(collection_df_in, log_df_in):
+      """Combines proper Watch Log entries with a synthetic single entry
+      for any film whose Collection 'Date Watched' cache isn't otherwise
+      represented in the log -- covers watches saved before the Watch Log
+      existed, so old data isn't just dropped."""
+      events = []
+      if "Film ID" in log_df_in.columns and not log_df_in.empty:
+        for _, row in log_df_in.iterrows():
+          events.append({
+              "Film ID": str(row.get("Film ID", "")),
+              "Title": row.get("Title", ""),
+              "Date": row.get("Date Watched"),
+          })
+      logged_pairs = {(e["Film ID"], str(e["Date"])[:10]) for e in events}
+
+      if "Date Watched" in collection_df_in.columns:
+        for _, row in collection_df_in.iterrows():
+          dw = row.get("Date Watched")
+          if pd.isna(dw) or str(dw).strip() == "":
+            continue
+          fid = str(row.get("Film ID", ""))
+          date_str = str(dw)[:10]
+          if (fid, date_str) not in logged_pairs:
+            events.append({"Film ID": fid, "Title": row.get("Title", ""), "Date": date_str})
+
+      return pd.DataFrame(events)
+
+    watch_events = build_watch_events(valid_collection, watch_log_df)
+
+    if watch_events.empty:
       st.info("Log some watch dates from the Update tab and your yearly rewind will show up here.")
     else:
-      watched_dates = pd.to_datetime(valid_collection["Date Watched"], errors="coerce")
-      years_available = sorted(watched_dates.dt.year.dropna().unique().astype(int).tolist(), reverse=True)
+      watch_events["Date"] = pd.to_datetime(watch_events["Date"], errors="coerce")
+      watch_events = watch_events.dropna(subset=["Date"])
+      years_available = sorted(watch_events["Date"].dt.year.unique().tolist(), reverse=True)
 
       if not years_available:
         st.info("No watch dates logged yet — mark a few films watched with a date and check back.")
       else:
         selected_rewind_year = st.selectbox("Year", years_available, key="rewind_year")
-        year_mask = watched_dates.dt.year == selected_rewind_year
-        year_films = valid_collection[year_mask].copy()
-        year_films["_watched_date"] = watched_dates[year_mask]
+        year_events = watch_events[watch_events["Date"].dt.year == selected_rewind_year].copy()
 
-        total_watched_this_year = len(year_films)
+        enrich_cols = [c for c in ["Film ID", "Genre", "Director", "Runtime (min)"] if c in valid_collection.columns]
+        if "Film ID" in enrich_cols and len(enrich_cols) > 1:
+          enrich_df = valid_collection[enrich_cols].copy()
+          enrich_df["Film ID"] = enrich_df["Film ID"].astype(str)
+          year_events = year_events.merge(enrich_df, on="Film ID", how="left")
+
+        total_sessions = len(year_events)
+        unique_films = year_events["Title"].nunique()
 
         top_genre = None
-        if "Genre" in year_films.columns:
-          genre_counts = split_multi_value_counts(year_films["Genre"])
+        if "Genre" in year_events.columns:
+          genre_counts = split_multi_value_counts(year_events["Genre"])
           top_genre = genre_counts.index[0] if not genre_counts.empty else None
 
         top_director = None
-        if "Director" in year_films.columns:
-          director_counts = split_multi_value_counts(year_films["Director"])
+        if "Director" in year_events.columns:
+          director_counts = split_multi_value_counts(year_events["Director"])
           top_director = director_counts.index[0] if not director_counts.empty else None
 
         busiest_month = None
-        if total_watched_this_year:
-          month_counts = year_films["_watched_date"].dt.strftime("%B").value_counts()
+        if total_sessions:
+          month_counts = year_events["Date"].dt.strftime("%B").value_counts()
           busiest_month = month_counts.index[0] if not month_counts.empty else None
 
         longest_title = shortest_title = None
         total_hours = None
-        if "Runtime (min)" in year_films.columns:
-          runtimes = pd.to_numeric(year_films["Runtime (min)"], errors="coerce").dropna()
+        if "Runtime (min)" in year_events.columns:
+          runtimes = pd.to_numeric(year_events["Runtime (min)"], errors="coerce").dropna()
           if not runtimes.empty:
             longest_idx = runtimes.idxmax()
             shortest_idx = runtimes.idxmin()
-            longest_title = f"{year_films.loc[longest_idx, 'Title']} ({int(runtimes.loc[longest_idx])} min)"
-            shortest_title = f"{year_films.loc[shortest_idx, 'Title']} ({int(runtimes.loc[shortest_idx])} min)"
+            longest_title = f"{year_events.loc[longest_idx, 'Title']} ({int(runtimes.loc[longest_idx])} min)"
+            shortest_title = f"{year_events.loc[shortest_idx, 'Title']} ({int(runtimes.loc[shortest_idx])} min)"
             total_hours = runtimes.sum() / 60
 
-        rwcol1, rwcol2 = st.columns(2)
+        rwcol1, rwcol2, rwcol3 = st.columns(3)
         with rwcol1:
-          st.metric("Films Watched", total_watched_this_year)
+          st.metric("Watch Sessions", total_sessions)
         with rwcol2:
+          st.metric("Unique Films", unique_films)
+        with rwcol3:
           st.metric("Hours Watched", f"{total_hours:.1f}" if total_hours else "—")
 
         if top_genre:
@@ -2012,8 +2279,51 @@ try:
           {"Watched": watched_count, "Unwatched": unwatched_count}
       ))
 
+    if "Date Watched" in valid_collection.columns:
+      last_watched_dates = pd.to_datetime(valid_collection["Date Watched"], errors="coerce")
+      forgotten = valid_collection.copy()
+      forgotten["_last_watched"] = last_watched_dates
+      forgotten = forgotten.dropna(subset=["_last_watched"])
+      forgotten["_years_ago"] = (pd.Timestamp.today() - forgotten["_last_watched"]).dt.days / 365.25
+      forgotten = forgotten[forgotten["_years_ago"] >= 3].sort_values(by="_years_ago", ascending=False)
+
+      if not forgotten.empty:
+        film_divider()
+        st.markdown("**🕰️ Forgotten Favorites** (not watched in 3+ years)")
+        for _, frow in forgotten.head(10).iterrows():
+          st.markdown(
+              f"- **{frow['Title']}** ({safe_year(frow.get('Year'))}) — "
+              f"last watched {frow['_last_watched'].strftime('%d/%m/%Y')} "
+              f"({frow['_years_ago']:.1f} years ago)"
+          )
+
   # --- TAB 6: EXTRAS ---
   with app_mode[5]:
+    with st.expander("💾 Backup & Export"):
+      st.caption(
+          "Downloads the exact spreadsheet the app is currently using -- "
+          "same data as what's synced to GitHub, just handy to grab a copy "
+          "any time without needing to go find it in the repo."
+      )
+      try:
+        with open(FILE_PATH, "rb") as f:
+          file_bytes = f.read()
+        backup_filename = f"Blu-ray_Collection_{datetime.date.today().strftime('%Y-%m-%d')}.xlsx"
+        st.download_button(
+            "📥 Download Current Database",
+            data=file_bytes,
+            file_name=backup_filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+      except FileNotFoundError:
+        st.error("Couldn't find the spreadsheet file to download.")
+
+      if github_sync_configured():
+        st.caption(
+            "Deletes and bulk backfills also save a timestamped safety copy "
+            "to a `backups/` folder in your GitHub repo automatically."
+        )
+
     st.subheader("🏆 Franchises, Awards & Ratings")
     st.caption(
         "Franchise % Complete and Consensus scores are Excel formulas. "
@@ -2021,7 +2331,7 @@ try:
         "Excel once to refresh them (this app tries to do it automatically "
         "if LibreOffice is installed on your machine)."
     )
-    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["Franchises", "Awards", "Ratings", "People"])
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4, sub_tab5 = st.tabs(["Franchises", "Awards", "Ratings", "People", "Milestones"])
     with sub_tab1:
       if (
           "Collection" in valid_collection.columns
@@ -2044,6 +2354,7 @@ try:
         )
 
         st.markdown("**📦 Box Set Completion**")
+        owned_titles_norm = set(valid_collection["Title"].dropna().str.strip().str.lower())
         for _, srow in sets_progress.iterrows():
           owned = int(srow["Owned"])
           target = int(srow["Target"])
@@ -2056,6 +2367,31 @@ try:
             label += f" ({missing} to go)"
           st.markdown(label)
           st.progress(pct)
+
+          if missing > 0 and tmdb_configured():
+            gap_key = f"franchise_gap_{srow['Collection']}"
+            if st.button("🔍 Show missing films", key=f"gap_btn_{srow['Collection']}"):
+              st.session_state[gap_key] = not st.session_state.get(gap_key, False)
+
+            if st.session_state.get(gap_key):
+              canonical_films = tmdb_collection_films_cached(srow["Collection"])
+              if not canonical_films:
+                st.caption("No confident TMDb match for this collection name — can't list exact titles.")
+              else:
+                missing_films = find_missing_titles(canonical_films, owned_titles_norm)
+                if not missing_films:
+                  st.caption("TMDb doesn't show any films beyond what you already own.")
+                else:
+                  for mf in missing_films:
+                    gcol1, gcol2 = st.columns([3, 1])
+                    with gcol1:
+                      st.markdown(f"　　• {mf['title']} ({mf['year'] or '—'})")
+                    with gcol2:
+                      if st.button("+ Wishlist", key=f"gap_add_{srow['Collection']}_{mf['title']}"):
+                        add_to_wishlist(mf["title"])
+                        st.cache_data.clear()
+                        st.success(f"Added '{mf['title']}'!")
+                        st.rerun()
         film_divider()
 
       st.dataframe(franchise_df, use_container_width=True, height=300)
@@ -2150,6 +2486,85 @@ try:
             films_text = person_row.get("Films in Collection", "")
             if pd.notna(films_text):
               st.markdown(films_text)
+
+          if person_type == "Director" and tmdb_configured():
+            dir_gap_key = f"director_gap_{selected_name}"
+            if st.button("🔍 Show missing films", key=f"dir_gap_btn_{selected_name}"):
+              st.session_state[dir_gap_key] = not st.session_state.get(dir_gap_key, False)
+
+            if st.session_state.get(dir_gap_key):
+              filmography = tmdb_director_filmography_cached(selected_name)
+              if not filmography:
+                st.caption("No confident TMDb match for this director.")
+              else:
+                owned_titles_norm = set(valid_collection["Title"].dropna().str.strip().str.lower())
+                missing_films = find_missing_titles(filmography, owned_titles_norm)
+                if not missing_films:
+                  st.caption(f"You appear to own everything TMDb lists for {selected_name}!")
+                else:
+                  st.markdown(f"**Missing from your {selected_name} collection:**")
+                  for mf in missing_films:
+                    gcol1, gcol2 = st.columns([3, 1])
+                    with gcol1:
+                      st.markdown(f"　　• {mf['title']} ({mf['year'] or '—'})")
+                    with gcol2:
+                      if st.button("+ Wishlist", key=f"dir_gap_add_{selected_name}_{mf['title']}"):
+                        add_to_wishlist(mf["title"])
+                        st.cache_data.clear()
+                        st.success(f"Added '{mf['title']}'!")
+                        st.rerun()
+
+    with sub_tab5:
+      st.subheader("🏅 Milestones & Achievements")
+
+      milestone_thresholds = [25, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+
+      def render_milestone(count, label, emoji):
+        reached = [t for t in milestone_thresholds if count >= t]
+        next_target = next((t for t in milestone_thresholds if count < t), None)
+        headline = f"{emoji} **{label}: {count}**"
+        if reached:
+          headline += f" — {reached[-1]}+ unlocked 🎉"
+        st.markdown(headline)
+        if next_target:
+          st.progress(count / next_target)
+          st.caption(f"{next_target - count} more to reach {next_target}")
+
+      render_milestone(total_collection, "Films Owned", "🎬")
+      watched_total = int(valid_collection["Watched"].apply(is_watched).sum()) if "Watched" in valid_collection.columns else 0
+      render_milestone(watched_total, "Films Watched", "✅")
+
+      if "Best Picture" in valid_collection.columns:
+        bp_nominated = (valid_collection["Best Picture"] == "Nominated").sum()
+        bp_winner = (valid_collection["Best Picture"] == "Winner").sum()
+        bp_total = int(bp_nominated + bp_winner)
+        if bp_total:
+          render_milestone(bp_total, "Best Picture Nominees Owned", "🏆")
+          if bp_winner:
+            st.caption(f"({int(bp_winner)} of those are Best Picture winners)")
+
+      film_divider()
+
+      if {"Collection", "Target Films"}.issubset(franchise_df.columns) and "Collection" in valid_collection.columns:
+        owned_by_set_ms = valid_collection["Collection"].dropna().value_counts()
+        fr_ms = franchise_df.dropna(subset=["Collection"]).copy()
+        fr_ms["Owned"] = fr_ms["Collection"].map(owned_by_set_ms).fillna(0).astype(int)
+        fr_ms["Target"] = pd.to_numeric(fr_ms["Target Films"], errors="coerce").fillna(fr_ms["Owned"])
+        completed_sets = fr_ms[(fr_ms["Target"] > 0) & (fr_ms["Owned"] >= fr_ms["Target"])]
+
+        if not completed_sets.empty:
+          st.markdown("**📦 Completed Box Sets**")
+          for _, crow in completed_sets.iterrows():
+            st.markdown(f"✅ All {int(crow['Target'])} **{crow['Collection']}** films owned!")
+          film_divider()
+
+      if "Director" in valid_collection.columns:
+        director_counts = split_multi_value_counts(valid_collection["Director"])
+        big_directors = director_counts[director_counts >= 5]
+        if not big_directors.empty:
+          st.markdown("**🎥 Director Milestones**")
+          for dname, dcount in big_directors.head(10).items():
+            st.markdown(f"🎬 {int(dcount)} **{dname}** films owned")
 
   # --- TAB 7: ON THIS DAY ---
   with app_mode[6]:
