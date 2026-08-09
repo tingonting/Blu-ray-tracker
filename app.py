@@ -697,13 +697,14 @@ def retailer_search_links(title):
   """Search-page links for a title, one tap instead of typing it out each
   time. HMV/Zavvi don't have a documented simple search URL, so those go via
   a site-scoped Google search (same idea as the IMDb/RT lookup links already
-  in your Ratings sheet); Amazon's search URL format is well-established so
-  that one links directly."""
+  in your Ratings sheet); Amazon and CEX both have confirmed, documented
+  search URL formats so those link directly."""
   quoted = urllib.parse.quote_plus(title)
   return {
       "HMV": f"https://www.google.com/search?q=site:hmv.com+{quoted}",
       "Zavvi": f"https://www.google.com/search?q=site:zavvi.com+{quoted}",
       "Amazon": f"https://www.amazon.co.uk/s?k={quoted}",
+      "CEX": f"https://uk.webuy.com/search?stext={quoted}",
   }
 
 
@@ -1964,7 +1965,8 @@ try:
             f"<span style='font-size:0.85em;'>🔗 Check price: "
             f"<a href='{links['HMV']}' target='_blank'>HMV</a> · "
             f"<a href='{links['Zavvi']}' target='_blank'>Zavvi</a> · "
-            f"<a href='{links['Amazon']}' target='_blank'>Amazon</a></span>",
+            f"<a href='{links['Amazon']}' target='_blank'>Amazon</a> · "
+            f"<a href='{links['CEX']}' target='_blank'>CEX</a></span>",
             unsafe_allow_html=True,
         )
 
