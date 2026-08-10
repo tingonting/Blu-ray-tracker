@@ -1963,23 +1963,23 @@ try:
 
     film_divider()
 
-    with st.expander("🔄 Expand Actor/Director coverage from TMDb (one-time)"):
+    with st.expander("🔄 Backfill Genre/Cast/BBFC Rating from TMDb (one-time)"):
       st.caption(
-          "Your original 350 films likely only ever had up to 5 actors "
-          "recorded each, even though a film's full cast is much bigger — "
-          "so someone who wasn't top-billed (like a supporting role) can be "
-          "invisible under Browse by Actor. This looks up every owned "
-          "film's FULL cast on TMDb and expands the Actors/Directors sheets "
-          "to include everyone, not just the top 5. It won't touch "
-          "Collection's own Genre/Director/Cast/Notes cells except to fill "
-          "in any that are genuinely blank — and it's safe to run more than "
-          "once, films already counted for someone won't be double-counted."
+          "Fills in Genre, Director, full Cast, Runtime, Notes, and BBFC "
+          "Rating for films that don't have them yet — like ones added "
+          "before these features existed. Also expands the Actors/Directors "
+          "sheets to include a film's FULL cast (not just the 5 stored in "
+          "Collection's own Actor 1-5 columns), so someone who wasn't "
+          "top-billed still shows up under Browse by Actor. Never "
+          "overwrites anything you've already filled in, and it's safe to "
+          "run more than once — films already counted for someone won't be "
+          "double-counted."
       )
       if not tmdb_configured():
         st.info("Add a free TMDb API key to your secrets to use this — see the Add tab for setup notes.")
       else:
         st.write(f"This will look up all **{len(valid_collection)}** films in your collection.")
-        confirm_backfill = st.checkbox("Yes, look these up and expand actor/director coverage", key="confirm_backfill")
+        confirm_backfill = st.checkbox("Yes, look these up and fill in what's missing", key="confirm_backfill")
         if st.button("Run backfill", disabled=not confirm_backfill):
           films_to_process = [
               (row.get("Film ID"), row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
