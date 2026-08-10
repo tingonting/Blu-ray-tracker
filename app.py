@@ -2359,7 +2359,9 @@ try:
         "Excel once to refresh them (this app tries to do it automatically "
         "if LibreOffice is installed on your machine)."
     )
-    sub_tab1, sub_tab2, sub_tab3, sub_tab4, sub_tab5 = st.tabs(["Franchises", "Awards", "Ratings", "People", "Milestones"])
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4, sub_tab5, sub_tab6 = st.tabs(
+        ["Franchises", "Awards", "Ratings", "People", "Milestones", "Recently Watched"]
+    )
     with sub_tab1:
       if (
           "Collection" in valid_collection.columns
@@ -2541,6 +2543,31 @@ try:
           st.markdown("**🎥 Director Milestones**")
           for dname, dcount in big_directors.head(10).items():
             st.markdown(f"🎬 {int(dcount)} **{dname}** films owned")
+
+    with sub_tab6:
+      st.subheader("🕓 Recently Watched")
+      if "Date Watched" not in valid_collection.columns:
+        st.info("Log some watch dates from the Collection tab and your recently watched films will show up here.")
+      else:
+        recent = valid_collection.copy()
+        recent["_last_watched"] = pd.to_datetime(recent["Date Watched"], errors="coerce")
+        recent = recent.dropna(subset=["_last_watched"]).sort_values(by="_last_watched", ascending=False).head(5)
+
+        if recent.empty:
+          st.info("No watch dates logged yet — mark a film watched with a date from the Collection tab.")
+        else:
+          for _, rrow in recent.iterrows():
+            title = rrow.get("Title", "Unknown")
+            year_str = safe_year(rrow.get("Year"))
+            watched_date = rrow["_last_watched"].strftime("%d/%m/%Y")
+            st.markdown(f"🎬 **{title}** ({year_str})")
+            stars_line = f"Watched {watched_date}"
+            if "Rating (1-5)" in rrow.index:
+              stars = rating_stars_display(rrow.get("Rating (1-5)"))
+              if stars != "Not rated yet":
+                stars_line += f" · <span class='stars-display'>{stars}</span>"
+            st.markdown(f"<span style='opacity:0.7; font-size:0.9em;'>{stars_line}</span>", unsafe_allow_html=True)
+            film_divider()
 
   # --- TAB 7: ON THIS DAY ---
   with app_mode[6]:
