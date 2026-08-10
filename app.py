@@ -283,6 +283,13 @@ except ImportError:
 FILE_PATH = "Blu-ray_Collection_Tracker_v5.0.xlsx"
 STAR_OPTIONS = ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
 
+# BBFC (British Board of Film Classification) ratings, in age order. "12A"
+# and "12" are the same age tier (cinema vs. home-media label) so they rank
+# equally for filtering purposes.
+BBFC_RATINGS = ["", "U", "PG", "12A", "12", "15", "18"]
+BBFC_RANK = {"U": 0, "PG": 1, "12A": 2, "12": 2, "15": 3, "18": 4}
+
+
 
 def try_recalculate(filepath):
   """Best-effort recalculation of formulas (Dashboard stats, Franchise %,
@@ -334,8 +341,9 @@ def tmdb_configured():
 @st.cache_data(ttl=3600, show_spinner=False)
 def tmdb_lookup_cached(title, year=None):
   """Searches TMDb for a title and pulls genre/director/runtime/plot/release
-  year. Cached for an hour since this data barely changes. Returns None on
-  any failure or no-match -- always safe to fall back to manual entry."""
+  year/BBFC certificate. Cached for an hour since this data barely changes.
+  Returns None on any failure or no-match -- always safe to fall back to
+  manual entry."""
   if requests is None or not tmdb_configured():
     return None
   try:
@@ -353,7 +361,9 @@ def tmdb_lookup_cached(title, year=None):
     movie_id = results[0]["id"]
     detail_resp = requests.get(
         f"https://api.themoviedb.org/3/movie/{movie_id}",
-        params={"api_key": api_key, "append_to_response": "credits"},
+        # release_dates piggybacks on this same call -- it's where the UK
+        # (BBFC) age certificate lives, no extra request needed.
+        params={"api_key": api_key, "append_to_response": "credits,release_dates"},
         timeout=8,
     )
     detail = detail_resp.json()
@@ -371,6 +381,16 @@ def tmdb_lookup_cached(title, year=None):
     release_date = detail.get("release_date", "") or ""
     release_year = int(release_date[:4]) if release_date[:4].isdigit() else None
 
+    bbfc_certificate = None
+    countries = detail.get("release_dates", {}).get("results", [])
+    gb_entry = next((c for c in countries if c.get("iso_3166_1") == "GB"), None)
+    if gb_entry:
+      for d in gb_entry.get("release_dates", []):
+        cert = (d.get("certification") or "").strip()
+        if cert:
+          bbfc_certificate = cert
+          break
+
     return {
         "id": movie_id,
         "genre": genres,
@@ -382,6 +402,7 @@ def tmdb_lookup_cached(title, year=None):
         "plot": detail.get("overview", ""),
         "year": release_year,
         "release_date": release_date,
+        "certificate": bbfc_certificate,
     }
   except Exception:
     return None
@@ -977,6 +998,7 @@ def backfill_missing_details(films_to_process):
   director_col = get_col_index(sheet, "Director")
   runtime_col = get_col_index(sheet, "Runtime (min)")
   notes_col = get_col_index(sheet, "Notes")
+  cert_col = ensure_column(sheet, "BBFC Rating")
   actor_cols = [get_col_index(sheet, f"Actor {i}") for i in range(1, 6)]
 
   for film_id, title, year, result in lookups:
@@ -1001,6 +1023,7 @@ def backfill_missing_details(films_to_process):
     _fill(director_col, result.get("director"))
     _fill(runtime_col, result.get("runtime"))
     _fill(notes_col, result.get("plot"))
+    _fill(cert_col, result.get("certificate"))
 
     top_cast = result.get("cast", [])
     for i, col in enumerate(actor_cols):
@@ -1044,7 +1067,7 @@ def add_to_collection(fields, full_cast=None):
   for header_name, value in fields.items():
     if value in (None, ""):
       continue
-    col = get_col_index(sheet, header_name)
+    col = ensure_column(sheet, header_name)
     if col:
       sheet.cell(row=next_row, column=col, value=value)
 
@@ -1410,6 +1433,12 @@ try:
           "Status", ["All", "Unwatched Only", "Watched Only"]
       )
 
+    selected_age_filter = st.selectbox(
+        "Age rating",
+        ["All", "Kids only (U/PG)", "12A and under"],
+        key="rand_age_filter",
+    )
+
     double_feature = st.toggle("🎬 Double Feature (pick 2 films)", value=False)
 
     pool_df = valid_collection.copy()
@@ -1421,6 +1450,11 @@ try:
         pool_df = pool_df[~pool_df["Watched"].apply(is_watched)]
       elif selected_watched_filter == "Watched Only":
         pool_df = pool_df[pool_df["Watched"].apply(is_watched)]
+
+    if selected_age_filter != "All" and "BBFC Rating" in pool_df.columns:
+      max_rank = 1 if selected_age_filter == "Kids only (U/PG)" else 2
+      age_ranks = pool_df["BBFC Rating"].map(BBFC_RANK)
+      pool_df = pool_df[age_ranks.notna() & (age_ranks <= max_rank)]
 
     st.markdown(
         f"<p style='text-align: center; font-size: 0.9em; color:"
@@ -1788,6 +1822,12 @@ try:
             "Cast (comma-separated, top 5)",
             value=(", ".join(tmdb_prefill.get("cast", [])) if tmdb_prefill else ""),
         )
+        m_cert_prefill = tmdb_prefill.get("certificate") if tmdb_prefill else None
+        m_certificate = st.selectbox(
+            "BBFC Rating",
+            BBFC_RATINGS,
+            index=BBFC_RATINGS.index(m_cert_prefill) if m_cert_prefill in BBFC_RATINGS else 0,
+        )
         m_notes = st.text_area(
             "Notes / Plot", value=(tmdb_prefill.get("plot", "") if tmdb_prefill else ""), height=80,
         )
@@ -1801,6 +1841,7 @@ try:
                 "Genre": m_genre,
                 "Director": m_director,
                 "Runtime (min)": m_runtime if m_runtime else None,
+                "BBFC Rating": m_certificate if m_certificate else None,
                 "Notes": m_notes,
                 "Watched": "No",
                 **cast_fields_from_string(m_cast),
@@ -1889,6 +1930,12 @@ try:
                 "Runtime (min)", min_value=0, max_value=600,
                 value=int(tmdb_result.get("runtime") or 0) if tmdb_result else 0, step=1,
             )
+            b_cert_prefill = tmdb_result.get("certificate") if tmdb_result else None
+            b_certificate = st.selectbox(
+                "BBFC Rating",
+                BBFC_RATINGS,
+                index=BBFC_RATINGS.index(b_cert_prefill) if b_cert_prefill in BBFC_RATINGS else 0,
+            )
             default_notes = f"Barcode: {decoded_code}"
             if tmdb_result and tmdb_result.get("plot"):
               default_notes = f"{tmdb_result['plot']}\n\nBarcode: {decoded_code}"
@@ -1903,6 +1950,7 @@ try:
                     "Genre": b_genre,
                     "Director": b_director,
                     "Runtime (min)": b_runtime if b_runtime else None,
+                    "BBFC Rating": b_certificate if b_certificate else None,
                     "Notes": b_notes,
                     "Watched": "No",
                     **cast_fields_from_string(b_cast),
