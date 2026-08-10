@@ -1435,7 +1435,7 @@ try:
 
     selected_age_filter = st.selectbox(
         "Age rating",
-        ["All", "Kids only (U/PG)", "12A and under"],
+        ["All", "Kids only (U/PG)", "12A and under", "15+ Only"],
         key="rand_age_filter",
     )
 
@@ -1458,9 +1458,12 @@ try:
         pool_df = pool_df[pool_df["Watched"].apply(is_watched)]
 
     if selected_age_filter != "All" and "BBFC Rating" in pool_df.columns:
-      max_rank = 1 if selected_age_filter == "Kids only (U/PG)" else 2
       age_ranks = pool_df["BBFC Rating"].map(BBFC_RANK)
-      pool_df = pool_df[age_ranks.notna() & (age_ranks <= max_rank)]
+      if selected_age_filter == "15+ Only":
+        pool_df = pool_df[age_ranks.notna() & (age_ranks >= 3)]
+      else:
+        max_rank = 1 if selected_age_filter == "Kids only (U/PG)" else 2
+        pool_df = pool_df[age_ranks.notna() & (age_ranks <= max_rank)]
 
     if selected_genres_filter and "Genre" in pool_df.columns:
       def _genre_match(cell):
