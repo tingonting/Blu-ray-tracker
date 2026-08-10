@@ -1439,6 +1439,12 @@ try:
         key="rand_age_filter",
     )
 
+    genre_options = (
+        split_multi_value_counts(valid_collection["Genre"]).index.tolist()
+        if "Genre" in valid_collection.columns else []
+    )
+    selected_genres_filter = st.multiselect("Genre", genre_options, key="rand_genre_filter")
+
     double_feature = st.toggle("🎬 Double Feature (pick 2 films)", value=False)
 
     pool_df = valid_collection.copy()
@@ -1455,6 +1461,12 @@ try:
       max_rank = 1 if selected_age_filter == "Kids only (U/PG)" else 2
       age_ranks = pool_df["BBFC Rating"].map(BBFC_RANK)
       pool_df = pool_df[age_ranks.notna() & (age_ranks <= max_rank)]
+
+    if selected_genres_filter and "Genre" in pool_df.columns:
+      def _genre_match(cell):
+        cell_genres = [g.strip() for g in str(cell).split(",")]
+        return any(g in cell_genres for g in selected_genres_filter)
+      pool_df = pool_df[pool_df["Genre"].apply(_genre_match)]
 
     st.markdown(
         f"<p style='text-align: center; font-size: 0.9em; color:"
