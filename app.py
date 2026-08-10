@@ -378,6 +378,7 @@ def tmdb_lookup_cached(title, year=None):
         "cast": top_cast,
         "full_cast": full_cast,
         "runtime": detail.get("runtime"),
+        "poster_path": detail.get("poster_path"),
         "plot": detail.get("overview", ""),
         "year": release_year,
         "release_date": release_date,
@@ -2560,13 +2561,28 @@ try:
             title = rrow.get("Title", "Unknown")
             year_str = safe_year(rrow.get("Year"))
             watched_date = rrow["_last_watched"].strftime("%d/%m/%Y")
-            st.markdown(f"🎬 **{title}** ({year_str})")
+
             stars_line = f"Watched {watched_date}"
             if "Rating (1-5)" in rrow.index:
               stars = rating_stars_display(rrow.get("Rating (1-5)"))
               if stars != "Not rated yet":
                 stars_line += f" · <span class='stars-display'>{stars}</span>"
-            st.markdown(f"<span style='opacity:0.7; font-size:0.9em;'>{stars_line}</span>", unsafe_allow_html=True)
+
+            pcol1, pcol2 = st.columns([1, 3])
+            with pcol1:
+              poster_path = None
+              if tmdb_configured():
+                poster_lookup = tmdb_lookup_cached(title, rrow.get("Year"))
+                if poster_lookup:
+                  poster_path = poster_lookup.get("poster_path")
+              if poster_path:
+                st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
+              else:
+                st.caption("(no poster found)")
+            with pcol2:
+              st.markdown(f"🎬 **{title}** ({year_str})")
+              st.markdown(f"<span style='opacity:0.7; font-size:0.9em;'>{stars_line}</span>", unsafe_allow_html=True)
+
             film_divider()
 
   # --- TAB 7: ON THIS DAY ---
