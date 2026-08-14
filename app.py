@@ -1254,6 +1254,29 @@ def add_to_wishlist(title, priority=3, target_price=None, notes=""):
   save_and_sync(FILE_PATH)
 
 
+def bulk_add_to_wishlist(titles, priority=3):
+  """Adds several titles to the Wishlist sheet in a single save/GitHub sync,
+  instead of calling add_to_wishlist in a loop (which would open, save, and
+  sync once per title -- painfully slow and API-heavy for a long pasted
+  list). Returns the number of titles actually added."""
+  titles = [t for t in titles if t]
+  if not titles:
+    return 0
+
+  book = openpyxl.load_workbook(FILE_PATH)
+  sheet = book["Wishlist"]
+  next_row = sheet.max_row + 1
+  for title in titles:
+    sheet.cell(row=next_row, column=1, value=title)
+    sheet.cell(row=next_row, column=3, value=priority)
+    sheet.cell(row=next_row, column=8, value="No")
+    next_row += 1
+
+  book.save(FILE_PATH)
+  save_and_sync(FILE_PATH)
+  return len(titles)
+
+
 try:
   (
       collection_df,
@@ -2036,6 +2059,25 @@ try:
           st.rerun()
         else:
           st.warning("Title is required.")
+
+    with st.expander("📋 Bulk add (paste a list)"):
+      st.caption("One title per line. Everything gets added with the same priority — adjust individual ones afterward if needed.")
+      bulk_priority = st.slider("Priority for all of these", 1, 5, 3, key="bulk_priority")
+      bulk_text = st.text_area(
+          "Paste your list here",
+          height=160,
+          placeholder="Se7en\nThe Prestige\nHeat\n...",
+          key="bulk_wishlist_input",
+      )
+      if st.button("Add all", key="bulk_add_wishlist_btn"):
+        titles = [t.strip() for t in bulk_text.split("\n") if t.strip()]
+        if titles:
+          added_count = bulk_add_to_wishlist(titles, bulk_priority)
+          st.cache_data.clear()
+          st.success(f"Added {added_count} film{'s' if added_count != 1 else ''} to your Wishlist!")
+          st.rerun()
+        else:
+          st.warning("Paste at least one title, one per line.")
 
     film_divider()
 
