@@ -1622,35 +1622,27 @@ try:
     watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
     unwatched_count = total_collection - watched_count
 
-    def stat_card(color_class, icon, number, label, sub):
-      st.markdown(
-          f'<div class="stat-card {color_class}">'
-          f'<div class="stat-icon-badge">{icon}</div>'
-          f'<div class="stat-number">{number}</div>'
-          f'<div class="stat-label">{label}</div>'
-          f'<div class="stat-sub">{sub}</div>'
-          f'</div>',
-          unsafe_allow_html=True,
+    def stat_button(key, icon, number, label, color_name):
+      return st.button(
+          f"{icon}  :{color_name}[**{number}**]  \n:{color_name}[{label}]",
+          key=key,
+          use_container_width=True,
       )
 
     stat_cols_row1 = st.columns(2)
     with stat_cols_row1[0]:
-      stat_card("stat-blue", "🎬", total_collection, "OWNED", "Films in collection")
-      if st.button("View", key="stat_owned", use_container_width=True):
+      if stat_button("stat_owned", "🎬", total_collection, "OWNED", "blue"):
         st.session_state["home_stat_view"] = "owned"
     with stat_cols_row1[1]:
-      stat_card("stat-violet", "🛒", total_wishlist, "WISHLIST", "Films to get")
-      if st.button("View", key="stat_wishlist", use_container_width=True):
+      if stat_button("stat_wishlist", "🛒", total_wishlist, "WISHLIST", "violet"):
         st.session_state["home_stat_view"] = "wishlist"
 
     stat_cols_row2 = st.columns(2)
     with stat_cols_row2[0]:
-      stat_card("stat-green", "✅", watched_count, "WATCHED", "Films you've watched")
-      if st.button("View", key="stat_watched", use_container_width=True):
+      if stat_button("stat_watched", "✅", watched_count, "WATCHED", "green"):
         st.session_state["home_stat_view"] = "watched"
     with stat_cols_row2[1]:
-      stat_card("stat-amber", "⬜", unwatched_count, "UNWATCHED", "Still to watch")
-      if st.button("View", key="stat_unwatched", use_container_width=True):
+      if stat_button("stat_unwatched", "⬜", unwatched_count, "UNWATCHED", "orange"):
         st.session_state["home_stat_view"] = "unwatched"
 
     if price_col:
