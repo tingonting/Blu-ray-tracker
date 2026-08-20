@@ -1685,8 +1685,57 @@ try:
           st.success(f"Added '{query}' to your Wishlist!")
           st.rerun()
       else:
-        st.success(f"Found {len(results)} matches:")
-        st.dataframe(style_format_column(curated_browse_view(results)), use_container_width=True, hide_index=True)
+        st.success(f"Found {len(results)} matches — tap a row to update it:")
+        results_reset = results.reset_index(drop=True)
+        display_df = style_format_column(curated_browse_view(results_reset))
+
+        selection = st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="search_results_df",
+        )
+
+        selected_rows = selection.selection.rows if hasattr(selection, "selection") else []
+        if selected_rows:
+          movie_row = results_reset.iloc[selected_rows[0]]
+          selected_id = movie_row.get("Film ID")
+          selected_title = movie_row.get("Title", "")
+          current_watched = movie_row.get("Watched", "No")
+          current_rating_val = movie_row.get("Rating (1-5)", 3)
+          default_star_index = star_index_from_rating(current_rating_val)
+          current_date_watched = movie_row.get("Date Watched") if "Date Watched" in movie_row.index else None
+
+          st.markdown(f"**Editing: {selected_title}**")
+          with st.form(f"search_edit_form_{selected_id}"):
+            scol_a, scol_b = st.columns(2)
+            with scol_a:
+              search_watched_status = st.selectbox(
+                  "Watched", ["Yes", "No"],
+                  index=0 if is_watched(current_watched) else 1,
+                  key=f"search_watched_{selected_id}",
+              )
+            with scol_b:
+              search_rating_stars = st.selectbox(
+                  "Stars", STAR_OPTIONS, index=default_star_index,
+                  key=f"search_stars_{selected_id}",
+              )
+            search_date_watched = st.date_input(
+                "Date watched (optional)",
+                value=pd.to_datetime(current_date_watched).date() if pd.notna(current_date_watched) else datetime.date.today(),
+                key=f"search_date_{selected_id}",
+            )
+            if st.form_submit_button("💾 Save Changes"):
+              if save_collection_update(selected_id, search_watched_status, search_rating_stars, search_date_watched):
+                st.cache_data.clear()
+                st.success(f"Saved '{selected_title}'!")
+                if search_rating_stars == STAR_OPTIONS[-1]:
+                  st.balloons()
+                st.rerun()
+              else:
+                st.error("Couldn't find that film in the sheet to update.")
     else:
       st.info("Type a keyword or set a filter above to find a film.")
 
