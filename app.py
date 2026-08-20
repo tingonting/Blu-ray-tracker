@@ -88,6 +88,27 @@ st.markdown(
         text-transform: uppercase;
         margin-top: -4px;
     }
+    .app-title-compact {
+        text-align: left;
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.9rem;
+        line-height: 1.05;
+        letter-spacing: 0.05em;
+        margin-bottom: 0px;
+        background: linear-gradient(100deg, var(--violet) 20%, var(--teal) 80%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    .app-subtitle-compact {
+        text-align: left;
+        color: var(--mute);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.62rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-top: -2px;
+    }
 
     /* Sprocket-hole divider — a nod to physical film reels, standing in for st.divider() */
     .film-divider {
@@ -305,6 +326,28 @@ st.markdown(
         font-weight: 700;
         padding: 0.6rem 1rem;
         font-family: 'Manrope', sans-serif;
+    }
+
+    /* Primary buttons (Pick a Random Movie, active sidebar nav item) get a
+       violet-to-sky gradient instead of relying on the theme's primaryColor,
+       which hasn't reliably applied on deploy -- this way it's guaranteed
+       regardless of what the theme config does. */
+    .stButton button[kind="primary"] {
+        background: linear-gradient(100deg, var(--violet), var(--sky)) !important;
+        border: none !important;
+        color: white !important;
+    }
+    .stButton button[kind="primary"]:hover {
+        background: linear-gradient(100deg, var(--sky), var(--violet)) !important;
+    }
+
+    /* Bordered panel containers (st.container(border=True)) -- gives every
+       section its own card instead of floating loose in the page. */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: 1px solid rgba(108, 92, 232, 0.22) !important;
+        border-radius: 16px !important;
+        background: rgba(108, 92, 232, 0.03);
+        padding: 4px;
     }
 
     /* Form container look */
@@ -1501,15 +1544,38 @@ try:
       None,
   )
 
-  # App Header
-  st.markdown(
-      "<div class='app-title'>🎬 Conor's Blu-ray Hub</div>",
-      unsafe_allow_html=True,
-  )
-  st.markdown(
-      "<div class='app-subtitle'>Mobile Media Companion</div>",
-      unsafe_allow_html=True,
-  )
+  # App Header -- one row: title | search | sync status, closer to a real
+  # app's top bar instead of three stacked centered blocks.
+  head_col1, head_col2, head_col3 = st.columns([2.3, 3, 1.6])
+
+  with head_col1:
+    st.markdown("<div class='app-title-compact'>🎬 Conor's Blu-ray Hub</div>", unsafe_allow_html=True)
+    st.markdown("<div class='app-subtitle-compact'>Mobile Media Companion</div>", unsafe_allow_html=True)
+
+  with head_col2:
+    quick_search_text = st.text_input(
+        "Quick search",
+        placeholder="🔍 Search for a film, actor, director...",
+        key="quick_search_input",
+        label_visibility="collapsed",
+    )
+    if quick_search_text and quick_search_text != st.session_state.get("_last_quick_search", ""):
+      st.session_state["_last_quick_search"] = quick_search_text
+      st.session_state["search_query_input"] = quick_search_text
+      st.session_state["current_page"] = "Search"
+      st.rerun()
+
+  with head_col3:
+    if github_sync_configured():
+      st.markdown(
+          "<p style='text-align:right; font-size:0.72em; color:var(--teal); margin-top:6px;'>☁️ Cloud sync active</p>",
+          unsafe_allow_html=True,
+      )
+    else:
+      st.markdown(
+          "<p style='text-align:right; font-size:0.72em; opacity:0.5; margin-top:6px;'>💾 Local storage only</p>",
+          unsafe_allow_html=True,
+      )
 
   # Injects a proper home-screen icon for iOS/Android "Add to Home Screen",
   # since Streamlit's page_icon only sets the browser tab favicon, not the
@@ -1550,36 +1616,6 @@ try:
       height=0,
   )
 
-  if github_sync_configured():
-    st.markdown(
-        "<p style='text-align:center; font-size:0.75em; color:var(--teal); "
-        "margin-top:4px;'>☁️ Cloud sync active</p>",
-        unsafe_allow_html=True,
-    )
-  else:
-    st.markdown(
-        "<p style='text-align:center; font-size:0.75em; opacity:0.5; "
-        "margin-top:4px;'>💾 Local storage only — edits may not survive a restart</p>",
-        unsafe_allow_html=True,
-    )
-
-  # Quick search bar -- jumps straight to the Search page with the query
-  # already filled in, from anywhere in the app.
-  qs_col1, qs_col2 = st.columns([5, 1])
-  with qs_col1:
-    quick_search_text = st.text_input(
-        "Quick search",
-        placeholder="🔍 Search for a film, actor, director...",
-        key="quick_search_input",
-        label_visibility="collapsed",
-    )
-  with qs_col2:
-    if st.button("Go", key="quick_search_btn", use_container_width=True):
-      if quick_search_text:
-        st.session_state["search_query_input"] = quick_search_text
-        st.session_state["current_page"] = "Search"
-        st.rerun()
-
   film_divider()
 
   # Sidebar navigation -- replaces the old top tabs. Genuine upside beyond
@@ -1617,273 +1653,276 @@ try:
 
   # --- HOME & RANDOM PICKER ---
   if current_page == "Home":
-    st.markdown("### 📊 Library Stats")
+    with st.container(border=True):
+      st.markdown("### 📊 Library Stats")
 
-    watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
-    unwatched_count = total_collection - watched_count
+      watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
+      unwatched_count = total_collection - watched_count
 
-    def stat_button(key, icon, number, label, color_name):
-      return st.button(
-          f"{icon}  :{color_name}[**{number}**]  \n:{color_name}[{label}]",
-          key=key,
-          use_container_width=True,
-      )
+      def stat_button(key, icon, number, label, color_name):
+        return st.button(
+            f"{icon}  :{color_name}[**{number}**]  \n:{color_name}[{label}]",
+            key=key,
+            use_container_width=True,
+        )
 
-    stat_cols_row1 = st.columns(2)
-    with stat_cols_row1[0]:
-      if stat_button("stat_owned", "🎬", total_collection, "OWNED", "blue"):
-        st.session_state["home_stat_view"] = "owned"
-    with stat_cols_row1[1]:
-      if stat_button("stat_wishlist", "🛒", total_wishlist, "WISHLIST", "violet"):
-        st.session_state["home_stat_view"] = "wishlist"
+      stat_cols_row1 = st.columns(2)
+      with stat_cols_row1[0]:
+        if stat_button("stat_owned", "🎬", total_collection, "OWNED", "blue"):
+          st.session_state["home_stat_view"] = "owned"
+      with stat_cols_row1[1]:
+        if stat_button("stat_wishlist", "🛒", total_wishlist, "WISHLIST", "violet"):
+          st.session_state["home_stat_view"] = "wishlist"
 
-    stat_cols_row2 = st.columns(2)
-    with stat_cols_row2[0]:
-      if stat_button("stat_watched", "✅", watched_count, "WATCHED", "green"):
-        st.session_state["home_stat_view"] = "watched"
-    with stat_cols_row2[1]:
-      if stat_button("stat_unwatched", "⬜", unwatched_count, "UNWATCHED", "orange"):
-        st.session_state["home_stat_view"] = "unwatched"
+      stat_cols_row2 = st.columns(2)
+      with stat_cols_row2[0]:
+        if stat_button("stat_watched", "✅", watched_count, "WATCHED", "green"):
+          st.session_state["home_stat_view"] = "watched"
+      with stat_cols_row2[1]:
+        if stat_button("stat_unwatched", "⬜", unwatched_count, "UNWATCHED", "orange"):
+          st.session_state["home_stat_view"] = "unwatched"
 
-    if price_col:
-      total_value = pd.to_numeric(
-          valid_collection[price_col], errors="coerce"
-      ).sum()
-      st.markdown(
-          f"<p style='text-align: center; color: gray; margin-top: 4px;'>"
-          f"💰 Estimated collection value: <b>£{total_value:,.2f}</b></p>",
-          unsafe_allow_html=True,
-      )
-
-    active_stat_view = st.session_state.get("home_stat_view")
-    if active_stat_view:
-      view_titles = {
-          "owned": f"🎬 All {total_collection} owned films",
-          "wishlist": f"🛒 All {total_wishlist} wishlist films",
-          "watched": f"✅ {watched_count} watched films",
-          "unwatched": f"⬜ {unwatched_count} unwatched films",
-      }
-      hcol1, hcol2 = st.columns([4, 1])
-      with hcol1:
-        st.markdown(f"**{view_titles[active_stat_view]}**")
-      with hcol2:
-        if st.button("✕ Close", key="close_stat_view"):
-          st.session_state.pop("home_stat_view", None)
-          st.rerun()
-
-      if active_stat_view == "owned":
-        st.dataframe(style_format_column(curated_browse_view(valid_collection)), use_container_width=True, hide_index=True)
-      elif active_stat_view == "wishlist":
-        wishlist_cols = [c for c in ["Title", "Priority (1-5)", "Target Price (£)"] if c in valid_wishlist.columns]
-        st.dataframe(valid_wishlist[wishlist_cols], use_container_width=True, hide_index=True)
-      elif active_stat_view == "watched" and "Watched" in valid_collection.columns:
-        watched_films = valid_collection[valid_collection["Watched"].apply(is_watched)]
-        st.dataframe(style_format_column(curated_browse_view(watched_films)), use_container_width=True, hide_index=True)
-      elif active_stat_view == "unwatched" and "Watched" in valid_collection.columns:
-        unwatched_films = valid_collection[~valid_collection["Watched"].apply(is_watched)]
-        st.dataframe(style_format_column(curated_browse_view(unwatched_films)), use_container_width=True, hide_index=True)
-
-    film_divider()
-    st.markdown("### 🎲 Movie Night Decider")
-
-    rcol1, rcol2 = st.columns(2)
-    with rcol1:
-      formats = (
-          ["All"]
-          + sorted(valid_collection["Format"].dropna().unique().tolist())
-          if "Format" in valid_collection.columns
-          else ["All"]
-      )
-      selected_format_filter = st.selectbox(
-          "Format", formats, key="rand_format"
-      )
-
-    with rcol2:
-      selected_watched_filter = st.selectbox(
-          "Status", ["All", "Unwatched Only", "Watched Only"]
-      )
-
-    selected_age_filter = st.selectbox(
-        "Age rating",
-        ["All", "Kids only (U/PG)", "12A and under", "15+ Only"],
-        key="rand_age_filter",
-    )
-
-    genre_options = (
-        split_multi_value_counts(valid_collection["Genre"]).index.tolist()
-        if "Genre" in valid_collection.columns else []
-    )
-    selected_genres_filter = st.multiselect("Genre", genre_options, key="rand_genre_filter")
-
-    double_feature = st.toggle("🎬 Double Feature (pick 2 films)", value=False)
-
-    pool_df = valid_collection.copy()
-    if selected_format_filter != "All" and "Format" in pool_df.columns:
-      pool_df = pool_df[pool_df["Format"] == selected_format_filter]
-
-    if "Watched" in pool_df.columns:
-      if selected_watched_filter == "Unwatched Only":
-        pool_df = pool_df[~pool_df["Watched"].apply(is_watched)]
-      elif selected_watched_filter == "Watched Only":
-        pool_df = pool_df[pool_df["Watched"].apply(is_watched)]
-
-    if selected_age_filter != "All" and "BBFC Rating" in pool_df.columns:
-      age_ranks = pool_df["BBFC Rating"].map(BBFC_RANK)
-      if selected_age_filter == "15+ Only":
-        pool_df = pool_df[age_ranks.notna() & (age_ranks >= 3)]
-      else:
-        max_rank = 1 if selected_age_filter == "Kids only (U/PG)" else 2
-        pool_df = pool_df[age_ranks.notna() & (age_ranks <= max_rank)]
-
-    if selected_genres_filter and "Genre" in pool_df.columns:
-      def _genre_match(cell):
-        cell_genres = [g.strip() for g in str(cell).split(",")]
-        return any(g in cell_genres for g in selected_genres_filter)
-      pool_df = pool_df[pool_df["Genre"].apply(_genre_match)]
-
-    st.markdown(
-        f"<p style='text-align: center; font-size: 0.9em; color:"
-        f" gray;'>Available pool: <b>{len(pool_df)}</b> films</p>",
-        unsafe_allow_html=True,
-    )
-
-    pick_label = "🎰 Pick a Double Feature!" if double_feature else "🎰 Pick a Random Movie!"
-    if st.button(pick_label, type="primary"):
-      needed = 2 if double_feature else 1
-      if len(pool_df) >= needed:
-        picked = pool_df.sample(n=needed)
-        st.session_state["picked_movie_ids"] = picked.get(
-            "Film ID", picked.index.to_series()
-        ).astype(str).tolist()
-      else:
-        st.warning("Not enough movies match your filters.")
-        st.session_state.pop("picked_movie_ids", None)
-
-    if "picked_movie_ids" in st.session_state and "Film ID" in valid_collection.columns:
-      picked_rows = valid_collection[
-          valid_collection["Film ID"].astype(str).isin(
-              st.session_state["picked_movie_ids"]
-          )
-      ]
-
-      for _, picked_movie in picked_rows.iterrows():
-        p_title = picked_movie.get("Title", "Unknown")
-        p_year_str = safe_year(picked_movie.get("Year", ""))
-        p_format_badge = format_badge_html(picked_movie.get("Format", "Blu-ray"))
-        p_genre = picked_movie.get("Genre", "N/A")
-        p_director = picked_movie.get("Director", "N/A")
-        p_id = picked_movie.get("Film ID", "")
-        p_watched_raw = picked_movie.get("Watched", "No")
-        p_watched = watched_display(p_watched_raw)
-        p_rating_display = rating_stars_display(picked_movie.get("Rating (1-5)"))
-        p_date_watched = format_date_watched(picked_movie.get("Date Watched")) if "Date Watched" in picked_movie.index else ""
-        p_last_watched_html = f"<br><b>Last watched:</b> {p_date_watched}" if p_date_watched else ""
-
-        p_plot_html = ""
-        p_trailer_key = None
-        if tmdb_configured():
-          tmdb_pick_data = tmdb_lookup_cached(p_title, picked_movie.get("Year"))
-          if tmdb_pick_data and tmdb_pick_data.get("plot"):
-            p_plot_html = (
-                f'<p style="font-size: 0.85em; margin-top: 10px; opacity: 0.75; '
-                f'font-style: italic;">{tmdb_pick_data["plot"]}</p>'
-            )
-          if tmdb_pick_data and tmdb_pick_data.get("id"):
-            p_trailer_key = tmdb_trailer_cached(tmdb_pick_data["id"])
-
+      if price_col:
+        total_value = pd.to_numeric(
+            valid_collection[price_col], errors="coerce"
+        ).sum()
         st.markdown(
-            f"""
-                <div class="winner-box">
-                    <h3 style="color: #F0A83B; margin-bottom: 2px;">🎉 Tonight's Pick:</h3>
-                    <h2 style="margin: 0px;">{p_title} ({p_year_str})</h2>
-                    <p style="font-size: 0.95em; margin-top: 8px; opacity: 0.85;">
-                        {p_format_badge} &nbsp;<b>Director:</b> {p_director}<br>
-                        <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
-                        <b>Rating:</b> <span class="stars-display">{p_rating_display}</span>{p_last_watched_html}
-                    </p>
-                    {p_plot_html}
-                </div>
-                """,
+            f"<p style='text-align: center; color: gray; margin-top: 4px;'>"
+            f"💰 Estimated collection value: <b>£{total_value:,.2f}</b></p>",
             unsafe_allow_html=True,
         )
 
-        if p_trailer_key:
-          st.link_button("▶️ Watch Trailer", f"https://www.youtube.com/watch?v={p_trailer_key}")
+      active_stat_view = st.session_state.get("home_stat_view")
+      if active_stat_view:
+        view_titles = {
+            "owned": f"🎬 All {total_collection} owned films",
+            "wishlist": f"🛒 All {total_wishlist} wishlist films",
+            "watched": f"✅ {watched_count} watched films",
+            "unwatched": f"⬜ {unwatched_count} unwatched films",
+        }
+        hcol1, hcol2 = st.columns([4, 1])
+        with hcol1:
+          st.markdown(f"**{view_titles[active_stat_view]}**")
+        with hcol2:
+          if st.button("✕ Close", key="close_stat_view"):
+            st.session_state.pop("home_stat_view", None)
+            st.rerun()
 
-        with st.form(f"quick_picker_update_form_{p_id}"):
-          st.markdown(f"**Quick Update — {p_title}:**")
-          uq_col1, uq_col2 = st.columns(2)
-          with uq_col1:
-            quick_watched = st.selectbox(
-                "Watched",
-                ["Yes", "No"],
-                index=0 if is_watched(p_watched) else 1,
-                key=f"qp_watched_{p_id}",
+        if active_stat_view == "owned":
+          st.dataframe(style_format_column(curated_browse_view(valid_collection)), use_container_width=True, hide_index=True)
+        elif active_stat_view == "wishlist":
+          wishlist_cols = [c for c in ["Title", "Priority (1-5)", "Target Price (£)"] if c in valid_wishlist.columns]
+          st.dataframe(valid_wishlist[wishlist_cols], use_container_width=True, hide_index=True)
+        elif active_stat_view == "watched" and "Watched" in valid_collection.columns:
+          watched_films = valid_collection[valid_collection["Watched"].apply(is_watched)]
+          st.dataframe(style_format_column(curated_browse_view(watched_films)), use_container_width=True, hide_index=True)
+        elif active_stat_view == "unwatched" and "Watched" in valid_collection.columns:
+          unwatched_films = valid_collection[~valid_collection["Watched"].apply(is_watched)]
+          st.dataframe(style_format_column(curated_browse_view(unwatched_films)), use_container_width=True, hide_index=True)
+
+    film_divider()
+    with st.container(border=True):
+      st.markdown("### 🎲 Movie Night Decider")
+
+      rcol1, rcol2 = st.columns(2)
+      with rcol1:
+        formats = (
+            ["All"]
+            + sorted(valid_collection["Format"].dropna().unique().tolist())
+            if "Format" in valid_collection.columns
+            else ["All"]
+        )
+        selected_format_filter = st.selectbox(
+            "Format", formats, key="rand_format"
+        )
+
+      with rcol2:
+        selected_watched_filter = st.selectbox(
+            "Status", ["All", "Unwatched Only", "Watched Only"]
+        )
+
+      selected_age_filter = st.selectbox(
+          "Age rating",
+          ["All", "Kids only (U/PG)", "12A and under", "15+ Only"],
+          key="rand_age_filter",
+      )
+
+      genre_options = (
+          split_multi_value_counts(valid_collection["Genre"]).index.tolist()
+          if "Genre" in valid_collection.columns else []
+      )
+      selected_genres_filter = st.multiselect("Genre", genre_options, key="rand_genre_filter")
+
+      double_feature = st.toggle("🎬 Double Feature (pick 2 films)", value=False)
+
+      pool_df = valid_collection.copy()
+      if selected_format_filter != "All" and "Format" in pool_df.columns:
+        pool_df = pool_df[pool_df["Format"] == selected_format_filter]
+
+      if "Watched" in pool_df.columns:
+        if selected_watched_filter == "Unwatched Only":
+          pool_df = pool_df[~pool_df["Watched"].apply(is_watched)]
+        elif selected_watched_filter == "Watched Only":
+          pool_df = pool_df[pool_df["Watched"].apply(is_watched)]
+
+      if selected_age_filter != "All" and "BBFC Rating" in pool_df.columns:
+        age_ranks = pool_df["BBFC Rating"].map(BBFC_RANK)
+        if selected_age_filter == "15+ Only":
+          pool_df = pool_df[age_ranks.notna() & (age_ranks >= 3)]
+        else:
+          max_rank = 1 if selected_age_filter == "Kids only (U/PG)" else 2
+          pool_df = pool_df[age_ranks.notna() & (age_ranks <= max_rank)]
+
+      if selected_genres_filter and "Genre" in pool_df.columns:
+        def _genre_match(cell):
+          cell_genres = [g.strip() for g in str(cell).split(",")]
+          return any(g in cell_genres for g in selected_genres_filter)
+        pool_df = pool_df[pool_df["Genre"].apply(_genre_match)]
+
+      st.markdown(
+          f"<p style='text-align: center; font-size: 0.9em; color:"
+          f" gray;'>Available pool: <b>{len(pool_df)}</b> films</p>",
+          unsafe_allow_html=True,
+      )
+
+      pick_label = "🎰 Pick a Double Feature!" if double_feature else "🎰 Pick a Random Movie!"
+      if st.button(pick_label, type="primary"):
+        needed = 2 if double_feature else 1
+        if len(pool_df) >= needed:
+          picked = pool_df.sample(n=needed)
+          st.session_state["picked_movie_ids"] = picked.get(
+              "Film ID", picked.index.to_series()
+          ).astype(str).tolist()
+        else:
+          st.warning("Not enough movies match your filters.")
+          st.session_state.pop("picked_movie_ids", None)
+
+      if "picked_movie_ids" in st.session_state and "Film ID" in valid_collection.columns:
+        picked_rows = valid_collection[
+            valid_collection["Film ID"].astype(str).isin(
+                st.session_state["picked_movie_ids"]
             )
-          with uq_col2:
-            quick_stars = st.selectbox(
-                "Rating",
-                STAR_OPTIONS,
-                index=2,
-                key=f"qp_stars_{p_id}",
-            )
-          quick_date_watched = st.date_input(
-              "Date watched (optional)",
-              value=pd.to_datetime(picked_movie.get("Date Watched")).date()
-                    if "Date Watched" in picked_movie.index and pd.notna(picked_movie.get("Date Watched"))
-                    else datetime.date.today(),
-              key=f"qp_date_{p_id}",
+        ]
+
+        for _, picked_movie in picked_rows.iterrows():
+          p_title = picked_movie.get("Title", "Unknown")
+          p_year_str = safe_year(picked_movie.get("Year", ""))
+          p_format_badge = format_badge_html(picked_movie.get("Format", "Blu-ray"))
+          p_genre = picked_movie.get("Genre", "N/A")
+          p_director = picked_movie.get("Director", "N/A")
+          p_id = picked_movie.get("Film ID", "")
+          p_watched_raw = picked_movie.get("Watched", "No")
+          p_watched = watched_display(p_watched_raw)
+          p_rating_display = rating_stars_display(picked_movie.get("Rating (1-5)"))
+          p_date_watched = format_date_watched(picked_movie.get("Date Watched")) if "Date Watched" in picked_movie.index else ""
+          p_last_watched_html = f"<br><b>Last watched:</b> {p_date_watched}" if p_date_watched else ""
+
+          p_plot_html = ""
+          p_trailer_key = None
+          if tmdb_configured():
+            tmdb_pick_data = tmdb_lookup_cached(p_title, picked_movie.get("Year"))
+            if tmdb_pick_data and tmdb_pick_data.get("plot"):
+              p_plot_html = (
+                  f'<p style="font-size: 0.85em; margin-top: 10px; opacity: 0.75; '
+                  f'font-style: italic;">{tmdb_pick_data["plot"]}</p>'
+              )
+            if tmdb_pick_data and tmdb_pick_data.get("id"):
+              p_trailer_key = tmdb_trailer_cached(tmdb_pick_data["id"])
+
+          st.markdown(
+              f"""
+                  <div class="winner-box">
+                      <h3 style="color: #F0A83B; margin-bottom: 2px;">🎉 Tonight's Pick:</h3>
+                      <h2 style="margin: 0px;">{p_title} ({p_year_str})</h2>
+                      <p style="font-size: 0.95em; margin-top: 8px; opacity: 0.85;">
+                          {p_format_badge} &nbsp;<b>Director:</b> {p_director}<br>
+                          <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
+                          <b>Rating:</b> <span class="stars-display">{p_rating_display}</span>{p_last_watched_html}
+                      </p>
+                      {p_plot_html}
+                  </div>
+                  """,
+              unsafe_allow_html=True,
           )
 
-          if st.form_submit_button("💾 Save to Excel"):
-            if save_collection_update(p_id, quick_watched, quick_stars, quick_date_watched):
-              st.cache_data.clear()
-              st.success(f"Updated '{p_title}' successfully!")
-              if quick_stars == STAR_OPTIONS[-1]:
-                st.balloons()
-              st.rerun()
-            else:
-              st.error("Couldn't find that film in the sheet to update.")
+          if p_trailer_key:
+            st.link_button("▶️ Watch Trailer", f"https://www.youtube.com/watch?v={p_trailer_key}")
+
+          with st.form(f"quick_picker_update_form_{p_id}"):
+            st.markdown(f"**Quick Update — {p_title}:**")
+            uq_col1, uq_col2 = st.columns(2)
+            with uq_col1:
+              quick_watched = st.selectbox(
+                  "Watched",
+                  ["Yes", "No"],
+                  index=0 if is_watched(p_watched) else 1,
+                  key=f"qp_watched_{p_id}",
+              )
+            with uq_col2:
+              quick_stars = st.selectbox(
+                  "Rating",
+                  STAR_OPTIONS,
+                  index=2,
+                  key=f"qp_stars_{p_id}",
+              )
+            quick_date_watched = st.date_input(
+                "Date watched (optional)",
+                value=pd.to_datetime(picked_movie.get("Date Watched")).date()
+                      if "Date Watched" in picked_movie.index and pd.notna(picked_movie.get("Date Watched"))
+                      else datetime.date.today(),
+                key=f"qp_date_{p_id}",
+            )
+
+            if st.form_submit_button("💾 Save to Excel"):
+              if save_collection_update(p_id, quick_watched, quick_stars, quick_date_watched):
+                st.cache_data.clear()
+                st.success(f"Updated '{p_title}' successfully!")
+                if quick_stars == STAR_OPTIONS[-1]:
+                  st.balloons()
+                st.rerun()
+              else:
+                st.error("Couldn't find that film in the sheet to update.")
 
     film_divider()
 
     # --- Browse Your Collection: recently added, with posters + BBFC badge ---
-    st.markdown("### 🎬 Browse Your Collection")
-    st.caption("Recent additions to your library — swipe to see more.")
+    with st.container(border=True):
+      st.markdown("### 🎬 Browse Your Collection")
+      st.caption("Recent additions to your library — swipe to see more.")
 
-    if "Film ID" in valid_collection.columns:
-      recent_added = valid_collection.copy()
-      recent_added["_id_num"] = recent_added["Film ID"].astype(str).str.extract(r"F?(\d+)").astype(float)
-      recent_added = recent_added.sort_values(by="_id_num", ascending=False).head(6)
+      if "Film ID" in valid_collection.columns:
+        recent_added = valid_collection.copy()
+        recent_added["_id_num"] = recent_added["Film ID"].astype(str).str.extract(r"F?(\d+)").astype(float)
+        recent_added = recent_added.sort_values(by="_id_num", ascending=False).head(6)
 
-      poster_cards_html = []
-      for _, prow in recent_added.iterrows():
-        title = prow.get("Title", "")
-        year_str = safe_year(prow.get("Year"))
-        badge_html = age_badge_html(prow.get("BBFC Rating")) if "BBFC Rating" in prow.index else ""
+        poster_cards_html = []
+        for _, prow in recent_added.iterrows():
+          title = prow.get("Title", "")
+          year_str = safe_year(prow.get("Year"))
+          badge_html = age_badge_html(prow.get("BBFC Rating")) if "BBFC Rating" in prow.index else ""
 
-        poster_path = None
-        if tmdb_configured():
-          poster_lookup = tmdb_lookup_cached(title, prow.get("Year"))
-          if poster_lookup:
-            poster_path = poster_lookup.get("poster_path")
+          poster_path = None
+          if tmdb_configured():
+            poster_lookup = tmdb_lookup_cached(title, prow.get("Year"))
+            if poster_lookup:
+              poster_path = poster_lookup.get("poster_path")
 
-        if poster_path:
-          img_html = f'<img src="https://image.tmdb.org/t/p/w300{poster_path}"/>'
-        else:
-          img_html = (
-              '<div style="width:120px;height:178px;border-radius:10px;'
-              'background:rgba(108,92,232,0.12);display:flex;align-items:center;'
-              'justify-content:center;font-size:2em;">🎬</div>'
+          if poster_path:
+            img_html = f'<img src="https://image.tmdb.org/t/p/w300{poster_path}"/>'
+          else:
+            img_html = (
+                '<div style="width:120px;height:178px;border-radius:10px;'
+                'background:rgba(108,92,232,0.12);display:flex;align-items:center;'
+                'justify-content:center;font-size:2em;">🎬</div>'
+            )
+
+          poster_cards_html.append(
+              f'<div class="poster-card">{img_html}{badge_html}'
+              f'<div class="poster-title">{title}</div>'
+              f'<div class="poster-year">{year_str}</div></div>'
           )
 
-        poster_cards_html.append(
-            f'<div class="poster-card">{img_html}{badge_html}'
-            f'<div class="poster-title">{title}</div>'
-            f'<div class="poster-year">{year_str}</div></div>'
-        )
-
-      st.markdown(f'<div class="poster-row">{"".join(poster_cards_html)}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="poster-row">{"".join(poster_cards_html)}</div>', unsafe_allow_html=True)
 
     film_divider()
 
@@ -1891,35 +1930,37 @@ try:
     activity_col, actions_col = st.columns(2)
 
     with activity_col:
-      st.markdown("### 🕐 Recent Activity")
-      activity_events = build_recent_activity(valid_collection, valid_wishlist, watch_log_df, limit=5)
-      if not activity_events:
-        st.caption("Nothing logged yet — watch, add, or wishlist a film and it'll show up here.")
-      else:
-        for icon, text, ts in activity_events:
-          st.markdown(
-              f"<p style='margin-bottom:6px; font-size:0.9em;'>{icon} {text} "
-              f"<span style='opacity:0.5; font-size:0.85em;'> — {relative_time_str(ts)}</span></p>",
-              unsafe_allow_html=True,
-          )
+      with st.container(border=True):
+        st.markdown("### 🕐 Recent Activity")
+        activity_events = build_recent_activity(valid_collection, valid_wishlist, watch_log_df, limit=5)
+        if not activity_events:
+          st.caption("Nothing logged yet — watch, add, or wishlist a film and it'll show up here.")
+        else:
+          for icon, text, ts in activity_events:
+            st.markdown(
+                f"<p style='margin-bottom:6px; font-size:0.9em;'>{icon} {text} "
+                f"<span style='opacity:0.5; font-size:0.85em;'> — {relative_time_str(ts)}</span></p>",
+                unsafe_allow_html=True,
+            )
 
     with actions_col:
-      st.markdown("### ⚡ Quick Actions")
-      qa1, qa2 = st.columns(2)
-      with qa1:
-        if st.button("🔍  Advanced Search", key="qa_search", use_container_width=True):
-          st.session_state["current_page"] = "Search"
-          st.rerun()
-        if st.button("📊  Collection Stats", key="qa_stats", use_container_width=True):
-          st.session_state["current_page"] = "Stats"
-          st.rerun()
-      with qa2:
-        if st.button("🛒  View Wishlist", key="qa_wishlist", use_container_width=True):
-          st.session_state["current_page"] = "Wishlist"
-          st.rerun()
-        if st.button("📅  On This Day", key="qa_otd", use_container_width=True):
-          st.session_state["current_page"] = "On This Day"
-          st.rerun()
+      with st.container(border=True):
+        st.markdown("### ⚡ Quick Actions")
+        qa1, qa2 = st.columns(2)
+        with qa1:
+          if st.button("🔍  Advanced Search", key="qa_search", use_container_width=True):
+            st.session_state["current_page"] = "Search"
+            st.rerun()
+          if st.button("📊  Collection Stats", key="qa_stats", use_container_width=True):
+            st.session_state["current_page"] = "Stats"
+            st.rerun()
+        with qa2:
+          if st.button("🛒  View Wishlist", key="qa_wishlist", use_container_width=True):
+            st.session_state["current_page"] = "Wishlist"
+            st.rerun()
+          if st.button("📅  On This Day", key="qa_otd", use_container_width=True):
+            st.session_state["current_page"] = "On This Day"
+            st.rerun()
 
   # --- SEARCH PAGE ---
   elif current_page == "Search":
