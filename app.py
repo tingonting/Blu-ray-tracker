@@ -175,6 +175,77 @@ st.markdown(
         color: var(--mute);
     }
 
+    /* Horizontal-scroll poster row for "Browse Your Collection" -- relies
+       on native touch-swipe (no JS arrow controls), which is arguably the
+       more natural interaction on a phone anyway. */
+    .poster-row {
+        display: flex;
+        overflow-x: auto;
+        gap: 12px;
+        padding: 4px 2px 12px 2px;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+    }
+    .poster-card {
+        flex: 0 0 auto;
+        width: 120px;
+        scroll-snap-align: start;
+        position: relative;
+    }
+    .poster-card img {
+        width: 120px;
+        height: 178px;
+        object-fit: cover;
+        border-radius: 10px;
+        display: block;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .poster-card .poster-title {
+        font-size: 0.78em;
+        font-weight: 700;
+        margin-top: 6px;
+        line-height: 1.2;
+    }
+    .poster-card .poster-year {
+        font-size: 0.72em;
+        opacity: 0.6;
+    }
+    .age-badge {
+        position: absolute;
+        bottom: 40px;
+        right: 4px;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7em;
+        font-weight: 800;
+        color: #0A0B14;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+    .age-badge.u, .age-badge.pg { background: var(--teal); }
+    .age-badge.twelve { background: var(--amber); }
+    .age-badge.fifteen, .age-badge.eighteen { background: #E8546B; }
+
+    /* Quick Action tiles on Home */
+    .quick-action-tile {
+        background: rgba(108, 92, 232, 0.08);
+        border: 1px solid rgba(108, 92, 232, 0.2);
+        border-radius: 14px;
+        padding: 14px;
+        margin-bottom: 8px;
+    }
+    .quick-action-tile .qa-title {
+        font-weight: 700;
+        font-size: 0.95em;
+    }
+    .quick-action-tile .qa-sub {
+        font-size: 0.8em;
+        opacity: 0.65;
+    }
+
     /* Make buttons touch-friendly and prominent */
     .stButton button {
         width: 100%;
@@ -764,6 +835,75 @@ def format_badge_html(format_value):
   return f'<span class="format-badge {css_class}">{label}</span>'
 
 
+def age_badge_html(bbfc_rating):
+  """Small colored circular badge for a BBFC rating -- teal for U/PG, amber
+  for 12/12A, red for 15/18. Returns '' if there's no rating to show."""
+  if pd.isna(bbfc_rating) or str(bbfc_rating).strip() == "":
+    return ""
+  label = str(bbfc_rating).strip()
+  lower = label.lower()
+  if lower in ("u", "pg"):
+    css_class = "u" if lower == "u" else "pg"
+  elif lower in ("12", "12a"):
+    css_class = "twelve"
+  elif lower == "15":
+    css_class = "fifteen"
+  elif lower == "18":
+    css_class = "eighteen"
+  else:
+    return ""
+  return f'<div class="age-badge {css_class}">{label}</div>'
+
+
+def build_recent_activity(collection_df_in, wishlist_df_in, log_df_in, limit=5):
+  """Combines Watched, Added-to-Collection, and Added-to-Wishlist events
+  into one chronological feed. Wishlist adds on the same day get grouped
+  into a single 'Added N films to wishlist' entry rather than one line per
+  film, since a bulk-paste would otherwise flood the feed. Returns a list
+  of (icon, text, date) tuples, most recent first."""
+  events = []
+
+  if "Date Watched" in collection_df_in.columns:
+    watched_dates = pd.to_datetime(collection_df_in["Date Watched"], errors="coerce")
+    for idx in collection_df_in.index[watched_dates.notna()]:
+      events.append(("👁️", f"Watched {collection_df_in.loc[idx, 'Title']}", watched_dates.loc[idx]))
+
+  if "Date Added" in collection_df_in.columns:
+    added_dates = pd.to_datetime(collection_df_in["Date Added"], errors="coerce")
+    for idx in collection_df_in.index[added_dates.notna()]:
+      events.append(("➕", f"Added {collection_df_in.loc[idx, 'Title']} to collection", added_dates.loc[idx]))
+
+  if "Date Added" in wishlist_df_in.columns and "Title" in wishlist_df_in.columns:
+    wl = wishlist_df_in.dropna(subset=["Title"]).copy()
+    wl["_date_added"] = pd.to_datetime(wl["Date Added"], errors="coerce")
+    wl = wl.dropna(subset=["_date_added"])
+    for date_val, group in wl.groupby(wl["_date_added"].dt.date):
+      day_ts = pd.Timestamp(date_val)
+      if len(group) == 1:
+        events.append(("💜", f"Added {group.iloc[0]['Title']} to wishlist", day_ts))
+      else:
+        events.append(("💜", f"Added {len(group)} films to wishlist", day_ts))
+
+  events.sort(key=lambda e: e[2], reverse=True)
+  return events[:limit]
+
+
+def relative_time_str(ts):
+  """'2 days ago' / 'Today' / 'Yesterday' style phrasing for a timestamp."""
+  days = (pd.Timestamp.today().normalize() - ts.normalize()).days
+  if days <= 0:
+    return "Today"
+  if days == 1:
+    return "Yesterday"
+  if days < 14:
+    return f"{days} days ago"
+  weeks = days // 7
+  if weeks < 8:
+    return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+  months = days // 30
+  return f"{months} month{'s' if months != 1 else ''} ago"
+
+
 def retailer_search_links(title):
   """Search-page links for a title, one tap instead of typing it out each
   time. HMV/Zavvi don't have a documented simple search URL, so those go via
@@ -1064,6 +1204,9 @@ def add_to_collection(fields, full_cast=None):
   new_film_id = next_film_id(collection_df)
   sheet.cell(row=next_row, column=film_id_col, value=new_film_id)
 
+  date_added_col = ensure_column(sheet, "Date Added")
+  sheet.cell(row=next_row, column=date_added_col, value=datetime.date.today().strftime("%Y-%m-%d"))
+
   for header_name, value in fields.items():
     if value in (None, ""):
       continue
@@ -1250,6 +1393,8 @@ def add_to_wishlist(title, priority=3, target_price=None, notes=""):
     sheet.cell(row=next_row, column=4, value=target_price)
   sheet.cell(row=next_row, column=8, value="No")
   sheet.cell(row=next_row, column=9, value=notes)
+  date_added_col = ensure_column(sheet, "Date Added")
+  sheet.cell(row=next_row, column=date_added_col, value=datetime.date.today().strftime("%Y-%m-%d"))
   book.save(FILE_PATH)
   save_and_sync(FILE_PATH)
 
@@ -1266,10 +1411,13 @@ def bulk_add_to_wishlist(titles, priority=3):
   book = openpyxl.load_workbook(FILE_PATH)
   sheet = book["Wishlist"]
   next_row = sheet.max_row + 1
+  date_added_col = ensure_column(sheet, "Date Added")
+  today_str = datetime.date.today().strftime("%Y-%m-%d")
   for title in titles:
     sheet.cell(row=next_row, column=1, value=title)
     sheet.cell(row=next_row, column=3, value=priority)
     sheet.cell(row=next_row, column=8, value="No")
+    sheet.cell(row=next_row, column=date_added_col, value=today_str)
     next_row += 1
 
   book.save(FILE_PATH)
@@ -1619,6 +1767,82 @@ try:
               st.rerun()
             else:
               st.error("Couldn't find that film in the sheet to update.")
+
+    film_divider()
+
+    # --- Browse Your Collection: recently added, with posters + BBFC badge ---
+    st.markdown("### 🎬 Browse Your Collection")
+    st.caption("Recent additions to your library — swipe to see more.")
+
+    if "Film ID" in valid_collection.columns:
+      recent_added = valid_collection.copy()
+      recent_added["_id_num"] = recent_added["Film ID"].astype(str).str.extract(r"F?(\d+)").astype(float)
+      recent_added = recent_added.sort_values(by="_id_num", ascending=False).head(6)
+
+      poster_cards_html = []
+      for _, prow in recent_added.iterrows():
+        title = prow.get("Title", "")
+        year_str = safe_year(prow.get("Year"))
+        badge_html = age_badge_html(prow.get("BBFC Rating")) if "BBFC Rating" in prow.index else ""
+
+        poster_path = None
+        if tmdb_configured():
+          poster_lookup = tmdb_lookup_cached(title, prow.get("Year"))
+          if poster_lookup:
+            poster_path = poster_lookup.get("poster_path")
+
+        if poster_path:
+          img_html = f'<img src="https://image.tmdb.org/t/p/w300{poster_path}"/>'
+        else:
+          img_html = (
+              '<div style="width:120px;height:178px;border-radius:10px;'
+              'background:rgba(108,92,232,0.12);display:flex;align-items:center;'
+              'justify-content:center;font-size:2em;">🎬</div>'
+          )
+
+        poster_cards_html.append(
+            f'<div class="poster-card">{img_html}{badge_html}'
+            f'<div class="poster-title">{title}</div>'
+            f'<div class="poster-year">{year_str}</div></div>'
+        )
+
+      st.markdown(f'<div class="poster-row">{"".join(poster_cards_html)}</div>', unsafe_allow_html=True)
+
+    film_divider()
+
+    # --- Recent Activity + Quick Actions ---
+    activity_col, actions_col = st.columns(2)
+
+    with activity_col:
+      st.markdown("### 🕐 Recent Activity")
+      activity_events = build_recent_activity(valid_collection, valid_wishlist, watch_log_df, limit=5)
+      if not activity_events:
+        st.caption("Nothing logged yet — watch, add, or wishlist a film and it'll show up here.")
+      else:
+        for icon, text, ts in activity_events:
+          st.markdown(
+              f"<p style='margin-bottom:6px; font-size:0.9em;'>{icon} {text} "
+              f"<span style='opacity:0.5; font-size:0.85em;'> — {relative_time_str(ts)}</span></p>",
+              unsafe_allow_html=True,
+          )
+
+    with actions_col:
+      st.markdown("### ⚡ Quick Actions")
+      qa1, qa2 = st.columns(2)
+      with qa1:
+        if st.button("🔍  Advanced Search", key="qa_search", use_container_width=True):
+          st.session_state["current_page"] = "Search"
+          st.rerun()
+        if st.button("📊  Collection Stats", key="qa_stats", use_container_width=True):
+          st.session_state["current_page"] = "Stats"
+          st.rerun()
+      with qa2:
+        if st.button("🛒  View Wishlist", key="qa_wishlist", use_container_width=True):
+          st.session_state["current_page"] = "Wishlist"
+          st.rerun()
+        if st.button("📅  On This Day", key="qa_otd", use_container_width=True):
+          st.session_state["current_page"] = "On This Day"
+          st.rerun()
 
   # --- SEARCH PAGE ---
   elif current_page == "Search":
