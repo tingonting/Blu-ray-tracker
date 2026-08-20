@@ -30,6 +30,7 @@ st.markdown(
         --amber: #F0A83B;
         --paper: #EDECF5;
         --mute: #8B889E;
+        --sky: #4FA8F0;
     }
 
     /* Content width — narrow on phones (unchanged from before), progressively
@@ -245,6 +246,57 @@ st.markdown(
         font-size: 0.8em;
         opacity: 0.65;
     }
+
+    /* Colored Library Stats cards -- each stat gets its own accent color
+       (icon badge + big number) instead of one uniform button style. */
+    .stat-card {
+        border-radius: 14px;
+        padding: 14px 16px 12px 16px;
+        border: 1px solid rgba(255,255,255,0.06);
+        margin-bottom: 6px;
+    }
+    .stat-card .stat-icon-badge {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1em;
+        margin-bottom: 8px;
+    }
+    .stat-card .stat-number {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.8em;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .stat-card .stat-label {
+        font-family: 'Bebas Neue', sans-serif;
+        letter-spacing: 0.05em;
+        font-size: 0.95em;
+        margin-top: 2px;
+    }
+    .stat-card .stat-sub {
+        font-size: 0.75em;
+        opacity: 0.55;
+        margin-top: 2px;
+    }
+    .stat-card.stat-blue { background: rgba(79,168,240,0.08); border-color: rgba(79,168,240,0.25); }
+    .stat-card.stat-blue .stat-icon-badge { background: rgba(79,168,240,0.18); }
+    .stat-card.stat-blue .stat-number, .stat-card.stat-blue .stat-label { color: var(--sky); }
+
+    .stat-card.stat-violet { background: rgba(108,92,232,0.08); border-color: rgba(108,92,232,0.25); }
+    .stat-card.stat-violet .stat-icon-badge { background: rgba(108,92,232,0.18); }
+    .stat-card.stat-violet .stat-number, .stat-card.stat-violet .stat-label { color: var(--violet); }
+
+    .stat-card.stat-green { background: rgba(45,212,191,0.08); border-color: rgba(45,212,191,0.25); }
+    .stat-card.stat-green .stat-icon-badge { background: rgba(45,212,191,0.18); }
+    .stat-card.stat-green .stat-number, .stat-card.stat-green .stat-label { color: var(--teal); }
+
+    .stat-card.stat-amber { background: rgba(240,168,59,0.08); border-color: rgba(240,168,59,0.25); }
+    .stat-card.stat-amber .stat-icon-badge { background: rgba(240,168,59,0.18); }
+    .stat-card.stat-amber .stat-number, .stat-card.stat-amber .stat-label { color: var(--amber); }
 
     /* Make buttons touch-friendly and prominent */
     .stButton button {
@@ -1510,6 +1562,24 @@ try:
         "margin-top:4px;'>💾 Local storage only — edits may not survive a restart</p>",
         unsafe_allow_html=True,
     )
+
+  # Quick search bar -- jumps straight to the Search page with the query
+  # already filled in, from anywhere in the app.
+  qs_col1, qs_col2 = st.columns([5, 1])
+  with qs_col1:
+    quick_search_text = st.text_input(
+        "Quick search",
+        placeholder="🔍 Search for a film, actor, director...",
+        key="quick_search_input",
+        label_visibility="collapsed",
+    )
+  with qs_col2:
+    if st.button("Go", key="quick_search_btn", use_container_width=True):
+      if quick_search_text:
+        st.session_state["search_query_input"] = quick_search_text
+        st.session_state["current_page"] = "Search"
+        st.rerun()
+
   film_divider()
 
   # Sidebar navigation -- replaces the old top tabs. Genuine upside beyond
@@ -1552,20 +1622,35 @@ try:
     watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
     unwatched_count = total_collection - watched_count
 
+    def stat_card(color_class, icon, number, label, sub):
+      st.markdown(
+          f'<div class="stat-card {color_class}">'
+          f'<div class="stat-icon-badge">{icon}</div>'
+          f'<div class="stat-number">{number}</div>'
+          f'<div class="stat-label">{label}</div>'
+          f'<div class="stat-sub">{sub}</div>'
+          f'</div>',
+          unsafe_allow_html=True,
+      )
+
     stat_cols_row1 = st.columns(2)
     with stat_cols_row1[0]:
-      if st.button(f"🎬  **{total_collection}**  \nOwned", key="stat_owned", use_container_width=True):
+      stat_card("stat-blue", "🎬", total_collection, "OWNED", "Films in collection")
+      if st.button("View", key="stat_owned", use_container_width=True):
         st.session_state["home_stat_view"] = "owned"
     with stat_cols_row1[1]:
-      if st.button(f"🛒  **{total_wishlist}**  \nWishlist", key="stat_wishlist", use_container_width=True):
+      stat_card("stat-violet", "🛒", total_wishlist, "WISHLIST", "Films to get")
+      if st.button("View", key="stat_wishlist", use_container_width=True):
         st.session_state["home_stat_view"] = "wishlist"
 
     stat_cols_row2 = st.columns(2)
     with stat_cols_row2[0]:
-      if st.button(f"✅  **{watched_count}**  \nWatched", key="stat_watched", use_container_width=True):
+      stat_card("stat-green", "✅", watched_count, "WATCHED", "Films you've watched")
+      if st.button("View", key="stat_watched", use_container_width=True):
         st.session_state["home_stat_view"] = "watched"
     with stat_cols_row2[1]:
-      if st.button(f"⬜  **{unwatched_count}**  \nUnwatched", key="stat_unwatched", use_container_width=True):
+      stat_card("stat-amber", "⬜", unwatched_count, "UNWATCHED", "Still to watch")
+      if st.button("View", key="stat_unwatched", use_container_width=True):
         st.session_state["home_stat_view"] = "unwatched"
 
     if price_col:
@@ -1849,7 +1934,7 @@ try:
     st.subheader("🔍 Search Library")
     scol1, scol2 = st.columns([2, 1])
     with scol1:
-      query = st.text_input("Keyword search:")
+      query = st.text_input("Keyword search:", key="search_query_input")
     with scol2:
       search_column = st.selectbox(
           "In column", ["All"] + collection_df.columns.tolist()
