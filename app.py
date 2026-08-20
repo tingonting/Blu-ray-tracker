@@ -1364,19 +1364,41 @@ try:
     )
   film_divider()
 
-  # Navigation Tabs
-  app_mode = st.tabs([
-      "🏠 Home",
-      "🔍 Search",
-      "📚 Collection",
-      "🛒 Wishlist",
-      "📊 Stats",
-      "🏆 Extras",
-      "📅 On This Day",
-  ])
+  # Sidebar navigation -- replaces the old top tabs. Genuine upside beyond
+  # looks: st.tabs has no way to programmatically switch tabs, so a button
+  # elsewhere in the app could never "jump" the user to another section.
+  # session_state-driven navigation like this can.
+  NAV_PAGES = [
+      ("🏠", "Home"),
+      ("🔍", "Search"),
+      ("📚", "Collection"),
+      ("🛒", "Wishlist"),
+      ("📊", "Stats"),
+      ("🏆", "Extras"),
+      ("📅", "On This Day"),
+  ]
+  if "current_page" not in st.session_state:
+    st.session_state["current_page"] = "Home"
 
-  # --- TAB 1: HOME & RANDOM PICKER ---
-  with app_mode[0]:
+  with st.sidebar:
+    st.markdown("<div class='app-title' style='font-size:1.7rem;'>🎬 Blu-ray Hub</div>", unsafe_allow_html=True)
+    st.markdown("<div class='app-subtitle'>Navigation</div>", unsafe_allow_html=True)
+    film_divider()
+    for nav_icon, nav_label in NAV_PAGES:
+      is_active_page = st.session_state["current_page"] == nav_label
+      if st.button(
+          f"{nav_icon}  {nav_label}",
+          key=f"nav_{nav_label}",
+          use_container_width=True,
+          type="primary" if is_active_page else "secondary",
+      ):
+        st.session_state["current_page"] = nav_label
+        st.rerun()
+
+  current_page = st.session_state["current_page"]
+
+  # --- HOME & RANDOM PICKER ---
+  if current_page == "Home":
     st.markdown("### 📊 Library Stats")
 
     watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
@@ -1598,8 +1620,8 @@ try:
             else:
               st.error("Couldn't find that film in the sheet to update.")
 
-  # --- TAB 2: SEARCH ---
-  with app_mode[1]:
+  # --- SEARCH PAGE ---
+  elif current_page == "Search":
     st.subheader("🔍 Search Library")
     scol1, scol2 = st.columns([2, 1])
     with scol1:
@@ -1739,8 +1761,8 @@ try:
     else:
       st.info("Type a keyword or set a filter above to find a film.")
 
-  # --- TAB 3: COLLECTION & UPDATE ---
-  with app_mode[2]:
+  # --- COLLECTION PAGE ---
+  elif current_page == "Collection":
     st.subheader("📚 Update Status & Rating")
 
     valid_collection_sorted = valid_collection.sort_values(by="Film ID")
@@ -2087,8 +2109,8 @@ try:
         hide_index=True,
     )
 
-  # --- TAB 4: WISHLIST ---
-  with app_mode[3]:
+  # --- WISHLIST PAGE ---
+  elif current_page == "Wishlist":
     st.subheader("🛒 Wishlist")
 
     st.markdown("### ➕ Add to Wishlist")
@@ -2331,8 +2353,8 @@ try:
     else:
       st.info("Your wishlist is empty — add something above!")
 
-  # --- TAB 5: STATS ---
-  with app_mode[4]:
+  # --- STATS PAGE ---
+  elif current_page == "Stats":
     st.subheader("📊 Collection Insights")
 
     st.markdown("### 🎊 Yearly Rewind")
@@ -2480,8 +2502,8 @@ try:
               f"({frow['_years_ago']:.1f} years ago)"
           )
 
-  # --- TAB 6: EXTRAS ---
-  with app_mode[5]:
+  # --- EXTRAS PAGE ---
+  elif current_page == "Extras":
     with st.expander("💾 Backup & Export"):
       st.caption(
           "Downloads the exact spreadsheet the app is currently using -- "
@@ -2739,8 +2761,8 @@ try:
 
             film_divider()
 
-  # --- TAB 7: ON THIS DAY ---
-  with app_mode[6]:
+  # --- ON THIS DAY PAGE ---
+  elif current_page == "On This Day":
     st.subheader("📅 On This Day")
     today = datetime.date.today()
     st.caption(f"Films in your collection first released on {today.strftime('%B %d')}, across the years.")
