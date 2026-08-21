@@ -579,10 +579,14 @@ def film_divider():
 def section_header(icon, title, view_all_page=None):
   """Renders a section title with a colored icon badge instead of plain
   inline emoji + text, matching the stat cards' visual language. If
-  view_all_page is given, adds a small 'View All →' button that jumps to
-  that page via the sidebar's session_state routing."""
+  view_all_page is given, adds a small 'All →' button that jumps to that
+  page via the sidebar's session_state routing. Label is kept short since
+  this sometimes renders inside an already-narrow half-width column (e.g.
+  Recent Activity sits next to Quick Actions) -- 'View All' wrapped onto
+  three separate lines in that spot, so this stays compact regardless of
+  how much room it actually gets."""
   if view_all_page:
-    hcol1, hcol2 = st.columns([4, 1])
+    hcol1, hcol2 = st.columns([3, 2])
     with hcol1:
       st.markdown(
           f'<div class="section-header"><div class="section-icon-badge">{icon}</div>'
@@ -590,7 +594,7 @@ def section_header(icon, title, view_all_page=None):
           unsafe_allow_html=True,
       )
     with hcol2:
-      if st.button("View All →", key=f"viewall_{title}", use_container_width=True):
+      if st.button("All →", key=f"viewall_{title}", use_container_width=True):
         st.session_state["current_page"] = view_all_page
         st.rerun()
   else:
