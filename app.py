@@ -366,7 +366,7 @@ st.markdown(
         width: 100%;
         border-radius: 12px;
         font-weight: 700;
-        padding: 0.6rem 1rem;
+        padding: 1rem 1rem;
         font-family: 'Manrope', sans-serif;
     }
 
@@ -461,6 +461,7 @@ st.markdown(
         margin-bottom: 3px;
         text-align: left;
         justify-content: flex-start;
+        padding: 0.6rem 1rem;
     }
     .sidebar-footer {
         font-family: 'JetBrains Mono', monospace;
