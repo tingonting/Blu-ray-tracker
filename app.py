@@ -399,6 +399,24 @@ st.markdown(
         border-color: rgba(108, 92, 232, 0.4) !important;
     }
 
+    /* Equal-height side-by-side boxes -- Recent Activity and Quick Actions
+       naturally have different content lengths (a 5-item log vs. a fixed
+       2x2 button grid), so padding alone can't make them match. This makes
+       the shorter box's border stretch to match its taller sibling instead
+       of just wrapping its own content height. */
+    div[data-testid="stHorizontalBlock"] {
+        align-items: stretch;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        display: flex;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] > div {
+        width: 100%;
+    }
+    div[data-testid="stHorizontalBlock"] div[data-testid="stVerticalBlockBorderWrapper"] {
+        height: 100%;
+    }
+
     /* Section header with a colored icon badge, matching the stat cards'
        visual language instead of a plain emoji inline with text. */
     .section-header {
