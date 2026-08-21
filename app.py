@@ -384,12 +384,44 @@ st.markdown(
     }
 
     /* Bordered panel containers (st.container(border=True)) -- gives every
-       section its own card instead of floating loose in the page. */
+       section its own card instead of floating loose in the page. Also
+       lifts slightly on hover, same tactile feel as the buttons. */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border: 1px solid rgba(108, 92, 232, 0.22) !important;
         border-radius: 16px !important;
         background: rgba(108, 92, 232, 0.03);
         padding: 4px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(108, 92, 232, 0.15);
+        border-color: rgba(108, 92, 232, 0.4) !important;
+    }
+
+    /* Section header with a colored icon badge, matching the stat cards'
+       visual language instead of a plain emoji inline with text. */
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 4px;
+    }
+    .section-header .section-icon-badge {
+        width: 32px;
+        height: 32px;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.05em;
+        flex-shrink: 0;
+        background: rgba(108, 92, 232, 0.15);
+    }
+    .section-header .section-title {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.5em;
+        letter-spacing: 0.04em;
     }
 
     /* Form container look */
@@ -542,6 +574,31 @@ def film_divider():
       '<div class="film-divider">' + "<span></span>" * 22 + "</div>",
       unsafe_allow_html=True,
   )
+
+
+def section_header(icon, title, view_all_page=None):
+  """Renders a section title with a colored icon badge instead of plain
+  inline emoji + text, matching the stat cards' visual language. If
+  view_all_page is given, adds a small 'View All →' button that jumps to
+  that page via the sidebar's session_state routing."""
+  if view_all_page:
+    hcol1, hcol2 = st.columns([4, 1])
+    with hcol1:
+      st.markdown(
+          f'<div class="section-header"><div class="section-icon-badge">{icon}</div>'
+          f'<div class="section-title">{title}</div></div>',
+          unsafe_allow_html=True,
+      )
+    with hcol2:
+      if st.button("View All →", key=f"viewall_{title}", use_container_width=True):
+        st.session_state["current_page"] = view_all_page
+        st.rerun()
+  else:
+    st.markdown(
+        f'<div class="section-header"><div class="section-icon-badge">{icon}</div>'
+        f'<div class="section-title">{title}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 import shutil
 import subprocess
@@ -1924,7 +1981,7 @@ try:
   # --- HOME & RANDOM PICKER ---
   if current_page == "Home":
     with st.container(border=True):
-      st.markdown("### 📊 Library Stats")
+      section_header("📊", "Library Stats")
 
       watched_count = valid_collection["Watched"].apply(is_watched).sum() if "Watched" in valid_collection.columns else 0
       unwatched_count = total_collection - watched_count
@@ -1992,7 +2049,7 @@ try:
 
     film_divider()
     with st.container(border=True):
-      st.markdown("### 🎲 Movie Night Decider")
+      section_header("🎲", "Movie Night Decider")
 
       rcol1, rcol2 = st.columns(2)
       with rcol1:
@@ -2159,7 +2216,7 @@ try:
 
     # --- Browse Your Collection: recently added, with posters + BBFC badge ---
     with st.container(border=True):
-      st.markdown("### 🎬 Browse Your Collection")
+      section_header("🎬", "Browse Your Collection", view_all_page="Collection")
       st.caption("Recent additions to your library — tap the arrows to slide through.")
 
       if "Film ID" in valid_collection.columns:
@@ -2198,7 +2255,7 @@ try:
 
     with activity_col:
       with st.container(border=True):
-        st.markdown("### 🕐 Recent Activity")
+        section_header("🕐", "Recent Activity", view_all_page="Stats")
         activity_events = build_recent_activity(valid_collection, valid_wishlist, watch_log_df, limit=5)
         if not activity_events:
           st.caption("Nothing logged yet — watch, add, or wishlist a film and it'll show up here.")
@@ -2212,7 +2269,7 @@ try:
 
     with actions_col:
       with st.container(border=True):
-        st.markdown("### ⚡ Quick Actions")
+        section_header("⚡", "Quick Actions")
         qa1, qa2 = st.columns(2)
         with qa1:
           if st.button("🔍  Advanced Search", key="qa_search", use_container_width=True):
