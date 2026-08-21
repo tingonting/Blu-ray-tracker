@@ -41,7 +41,7 @@ st.markdown(
     .block-container {
         max-width: 600px;
         margin: 0 auto;
-        padding-top: 2rem;
+        padding-top: 4.5rem;
     }
     @media (min-width: 768px) {
         .block-container { max-width: 820px; }
@@ -2661,26 +2661,26 @@ try:
     with st.container(border=True):
       st.subheader("🛒 Wishlist")
 
-      st.markdown("### ➕ Add to Wishlist")
-      with st.form("wishlist_form", clear_on_submit=True):
-        new_title = st.text_input("Title *")
-        new_priority = st.slider("Priority (1-5)", 1, 5, 3)
-        new_target_price = st.number_input(
-            "Target Price (£)", min_value=0.0, value=15.00, step=0.50
-        )
-        new_notes = st.text_input("Notes")
+      with st.expander("➕ Add to Wishlist"):
+        with st.form("wishlist_form", clear_on_submit=True):
+          new_title = st.text_input("Title *")
+          new_priority = st.slider("Priority (1-5)", 1, 5, 3)
+          new_target_price = st.number_input(
+              "Target Price (£)", min_value=0.0, value=15.00, step=0.50
+          )
+          new_notes = st.text_input("Notes")
 
-        if st.form_submit_button("💾 Add Film"):
-          if new_title:
-            add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
-            st.cache_data.clear()
-            st.success(f"Added '{new_title}'!")
-            st.rerun()
-          else:
-            st.warning("Title is required.")
+          if st.form_submit_button("💾 Add Film"):
+            if new_title:
+              add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
+              st.cache_data.clear()
+              st.success(f"Added '{new_title}'!")
+              st.rerun()
+            else:
+              st.warning("Title is required.")
 
-      with st.expander("📋 Bulk add (paste a list)"):
-        st.caption("One title per line. Everything gets added with the same priority — adjust individual ones afterward if needed.")
+        st.markdown("---")
+        st.caption("**Bulk add** — one title per line, same priority for all of them.")
         bulk_priority = st.slider("Priority for all of these", 1, 5, 3, key="bulk_priority")
         bulk_text = st.text_area(
             "Paste your list here",
@@ -2793,32 +2793,29 @@ try:
           if pd.notna(w_target):
             price_bits.append(f"Target: £{w_target:.2f}")
           if pd.notna(w_cheapest):
-            price_bits.append(f"Cheapest found: £{w_cheapest:.2f}")
-          price_line = " | ".join(price_bits) if price_bits else "No price tracked yet"
+            price_bits.append(f"Cheapest: £{w_cheapest:.2f}")
+          price_line = " · ".join(price_bits) if price_bits else "No price tracked yet"
+          priority_str = f"{int(w_priority)}" if pd.notna(w_priority) and str(w_priority).strip() else "—"
 
-          wcol1, wcol2, wcol3 = st.columns([3, 1, 1])
-          with wcol1:
+          with st.expander(f"{w_title}  ·  Priority {priority_str}  ·  {price_line}"):
+            wcol2, wcol3 = st.columns(2)
+            with wcol2:
+              buy_clicked = st.button("✅ Bought", key=f"buy_{idx}", use_container_width=True)
+            with wcol3:
+              delete_clicked = st.button("🗑️ Delete", key=f"del_{idx}", use_container_width=True)
+
+            links = retailer_search_links(w_title)
             st.markdown(
-                f"**{w_title}**  \n<span style='opacity:0.65;font-size:0.85em;'>"
-                f"Priority: {w_priority} | {price_line}</span>",
+                f"<span style='font-size:0.85em;'>🔗 Check price: "
+                f"<a href='{links['HMV']}' target='_blank'>HMV</a> · "
+                f"<a href='{links['Zavvi']}' target='_blank'>Zavvi</a> · "
+                f"<a href='{links['Amazon']}' target='_blank'>Amazon</a> · "
+                f"<a href='{links['CEX']}' target='_blank'>CEX</a></span>",
                 unsafe_allow_html=True,
             )
-          with wcol2:
-            buy_clicked = st.button("✅ Bought", key=f"buy_{idx}")
-          with wcol3:
-            delete_clicked = st.button("🗑️", key=f"del_{idx}")
 
-          links = retailer_search_links(w_title)
-          st.markdown(
-              f"<span style='font-size:0.85em;'>🔗 Check price: "
-              f"<a href='{links['HMV']}' target='_blank'>HMV</a> · "
-              f"<a href='{links['Zavvi']}' target='_blank'>Zavvi</a> · "
-              f"<a href='{links['Amazon']}' target='_blank'>Amazon</a> · "
-              f"<a href='{links['CEX']}' target='_blank'>CEX</a></span>",
-              unsafe_allow_html=True,
-          )
-
-          with st.expander("🎚️ Change priority"):
+            st.markdown("---")
+            st.caption("🎚️ Change priority")
             with st.form(f"priority_form_{idx}", clear_on_submit=False):
               new_priority_value = st.slider(
                   "Priority (1-5)", 1, 5,
@@ -2836,7 +2833,8 @@ try:
                 st.success(f"Updated priority for '{w_title}' to {new_priority_value}.")
                 st.rerun()
 
-          with st.expander("💷 Log a price check"):
+            st.markdown("---")
+            st.caption("💷 Log a price check")
             with st.form(f"price_form_{idx}", clear_on_submit=False):
               pcol1, pcol2 = st.columns(2)
               with pcol1:
