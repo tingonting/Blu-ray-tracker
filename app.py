@@ -2276,14 +2276,14 @@ try:
         section_header("⚡", "Quick Actions")
         qa1, qa2 = st.columns(2)
         with qa1:
-          if st.button("🔍  Advanced Search", key="qa_search", use_container_width=True):
+          if st.button("🔍  Search", key="qa_search", use_container_width=True):
             st.session_state["current_page"] = "Search"
             st.rerun()
-          if st.button("📊  Collection Stats", key="qa_stats", use_container_width=True):
+          if st.button("📊  Stats", key="qa_stats", use_container_width=True):
             st.session_state["current_page"] = "Stats"
             st.rerun()
         with qa2:
-          if st.button("🛒  View Wishlist", key="qa_wishlist", use_container_width=True):
+          if st.button("🛒  Wishlist", key="qa_wishlist", use_container_width=True):
             st.session_state["current_page"] = "Wishlist"
             st.rerun()
           if st.button("📅  On This Day", key="qa_otd", use_container_width=True):
