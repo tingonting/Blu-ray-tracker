@@ -2658,9 +2658,9 @@ try:
 
   # --- WISHLIST PAGE ---
   elif current_page == "Wishlist":
-    with st.container(border=True):
-      st.subheader("🛒 Wishlist")
+    st.subheader("🛒 Wishlist")
 
+    with st.container(border=True):
       with st.expander("➕ Add to Wishlist"):
         with st.form("wishlist_form", clear_on_submit=True):
           new_title = st.text_input("Title *")
@@ -2698,8 +2698,9 @@ try:
           else:
             st.warning("Paste at least one title, one per line.")
 
-      film_divider()
+    film_divider()
 
+    with st.container(border=True):
       if tmdb_configured():
         with st.expander("✨ Because you own these..."):
           rcol1, rcol2 = st.columns([3, 1])
@@ -2757,6 +2758,7 @@ try:
                     st.success(f"Added '{rec['title']}' to your Wishlist!")
                     st.rerun()
 
+    with st.container(border=True):
       if not valid_wishlist.empty:
         # Deal alerts: cheapest found price has actually dropped to/below target
         has_price_cols = (
