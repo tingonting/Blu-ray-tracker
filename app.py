@@ -384,12 +384,15 @@ st.markdown(
     }
 
     /* Bordered panel containers (st.container(border=True)) -- gives every
-       section its own card instead of floating loose in the page. Also
-       lifts slightly on hover, same tactile feel as the buttons. */
+       section its own card instead of floating loose in the page. Frosted
+       glass effect (blur + translucency) for a layered feel instead of
+       flat solid cards. Also lifts slightly on hover. */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border: 1px solid rgba(108, 92, 232, 0.22) !important;
         border-radius: 16px !important;
-        background: rgba(108, 92, 232, 0.03);
+        background: rgba(20, 22, 42, 0.45);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
         padding: 4px;
         transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
@@ -448,6 +451,54 @@ st.markdown(
         border-radius: 16px;
         padding: 15px;
         background-color: rgba(108, 92, 232, 0.04);
+    }
+
+    /* Progress bars -- violet-to-teal gradient fill instead of Streamlit's
+       default blue, on a subtle themed track */
+    div[data-testid="stProgress"] > div > div {
+        background: rgba(108, 92, 232, 0.15) !important;
+        border-radius: 8px;
+    }
+    div[data-testid="stProgress"] > div > div > div {
+        background: linear-gradient(90deg, var(--violet), var(--teal)) !important;
+        border-radius: 8px;
+    }
+
+    /* Expanders -- match the card language used everywhere else instead of
+       Streamlit's plain default box */
+    div[data-testid="stExpander"] {
+        border: 1px solid rgba(108, 92, 232, 0.2) !important;
+        border-radius: 12px !important;
+        background: rgba(108, 92, 232, 0.03);
+        overflow: hidden;
+    }
+    div[data-testid="stExpander"] summary {
+        font-weight: 700;
+        font-family: 'Manrope', sans-serif;
+    }
+    div[data-testid="stExpander"] summary:hover {
+        color: var(--violet);
+    }
+
+    /* Sliders -- violet instead of the theme's primaryColor, which hasn't
+       reliably applied elsewhere either (same underlying issue as the
+       buttons). BaseWeb's internal slider structure is a bit fragile to
+       target precisely, so this is a best-effort pass covering the thumb,
+       filled track, and focus ring. */
+    div[data-baseweb="slider"] div[role="slider"] {
+        background-color: var(--violet) !important;
+        border-color: var(--violet) !important;
+    }
+    div[data-baseweb="slider"] > div > div:nth-child(2) {
+        background: linear-gradient(90deg, var(--violet), var(--teal)) !important;
+    }
+
+    /* Toggles -- same violet treatment for the "on" state */
+    div[data-baseweb="switch"] > div:first-child {
+        background: rgba(108, 92, 232, 0.25) !important;
+    }
+    div[data-baseweb="switch"] input:checked + div {
+        background: var(--violet) !important;
     }
 
     /* Dataframe responsiveness + styling -- gives tables a subtle themed
