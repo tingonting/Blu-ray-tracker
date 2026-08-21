@@ -1058,10 +1058,23 @@ def render_poster_carousel(cards, height=270):
   </style></head>
   <body>
     <div class="carousel-wrap">
-      <div class="nav-btn" onclick="document.getElementById('track').scrollBy({{left:-260,behavior:'smooth'}})">‹</div>
+      <div class="nav-btn" onclick="slideCarousel(-1)">‹</div>
       <div class="carousel-track" id="track">{cards_html}</div>
-      <div class="nav-btn" onclick="document.getElementById('track').scrollBy({{left:260,behavior:'smooth'}})">›</div>
+      <div class="nav-btn" onclick="slideCarousel(1)">›</div>
     </div>
+    <script>
+      function slideCarousel(dir) {{
+        var track = document.getElementById('track');
+        var maxScroll = track.scrollWidth - track.clientWidth;
+        if (dir > 0 && track.scrollLeft >= maxScroll - 5) {{
+          track.scrollTo({{left: 0, behavior: 'smooth'}});
+        }} else if (dir < 0 && track.scrollLeft <= 5) {{
+          track.scrollTo({{left: maxScroll, behavior: 'smooth'}});
+        }} else {{
+          track.scrollBy({{left: dir * 260, behavior: 'smooth'}});
+        }}
+      }}
+    </script>
   </body></html>
   """
   components.html(doc, height=height)
