@@ -400,10 +400,41 @@ st.markdown(
         background-color: rgba(108, 92, 232, 0.04);
     }
 
-    /* Dataframe responsiveness */
+    /* Dataframe responsiveness + styling -- gives tables a subtle themed
+       border/header instead of Streamlit's plain default look */
     div[data-testid="stDataFrame"] {
         width: 100%;
         border-radius: 12px;
+        border: 1px solid rgba(108, 92, 232, 0.18);
+        overflow: hidden;
+    }
+    div[data-testid="stDataFrame"] [role="columnheader"] {
+        background: rgba(108, 92, 232, 0.12) !important;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85em;
+        letter-spacing: 0.03em;
+        color: var(--paper) !important;
+    }
+    div[data-testid="stDataFrame"] [role="row"]:hover [role="gridcell"] {
+        background: rgba(108, 92, 232, 0.06) !important;
+    }
+
+    /* Sidebar polish -- subtle background tint to differentiate it from
+       the main content area, plus breathing room between nav buttons */
+    section[data-testid="stSidebar"] {
+        background: rgba(20, 22, 42, 0.6);
+        border-right: 1px solid rgba(108, 92, 232, 0.15);
+    }
+    section[data-testid="stSidebar"] .stButton button {
+        margin-bottom: 3px;
+        text-align: left;
+        justify-content: flex-start;
+    }
+    .sidebar-footer {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.68em;
+        opacity: 0.4;
+        margin-top: 24px;
     }
 
     /* Tabs: quiet until selected, then lit up in violet with a teal underline */
@@ -1819,6 +1850,11 @@ try:
         st.session_state["current_page"] = nav_label
         st.rerun()
 
+    st.markdown(
+        f"<div class='sidebar-footer'>🎬 Conor's Hub<br>{total_collection} films tracked</div>",
+        unsafe_allow_html=True,
+    )
+
   current_page = st.session_state["current_page"]
 
   # --- HOME & RANDOM PICKER ---
@@ -2131,1194 +2167,1200 @@ try:
 
   # --- SEARCH PAGE ---
   elif current_page == "Search":
-    st.subheader("🔍 Search Library")
-    scol1, scol2 = st.columns([2, 1])
-    with scol1:
-      query = st.text_input("Keyword search:", key="search_query_input")
-    with scol2:
-      search_column = st.selectbox(
-          "In column", ["All"] + collection_df.columns.tolist()
-      )
-
-    with st.expander("🔎 Filters"):
-      fcol1, fcol2 = st.columns(2)
-      with fcol1:
-        genre_options = (
-            split_multi_value_counts(valid_collection["Genre"]).index.tolist()
-            if "Genre" in valid_collection.columns else []
+    with st.container(border=True):
+      st.subheader("🔍 Search Library")
+      scol1, scol2 = st.columns([2, 1])
+      with scol1:
+        query = st.text_input("Keyword search:", key="search_query_input")
+      with scol2:
+        search_column = st.selectbox(
+            "In column", ["All"] + collection_df.columns.tolist()
         )
-        selected_genres = st.multiselect("Genre", genre_options)
-      with fcol2:
-        if "Year" in valid_collection.columns:
-          decades_available = sorted(
-              pd.to_numeric(valid_collection["Year"], errors="coerce")
-              .dropna().apply(lambda y: int(y) // 10 * 10).unique().tolist()
+
+      with st.expander("🔎 Filters"):
+        fcol1, fcol2 = st.columns(2)
+        with fcol1:
+          genre_options = (
+              split_multi_value_counts(valid_collection["Genre"]).index.tolist()
+              if "Genre" in valid_collection.columns else []
           )
-          decade_options = ["All"] + [f"{d}s" for d in decades_available]
-        else:
-          decade_options = ["All"]
-        selected_decade = st.selectbox("Decade", decade_options)
-
-      fcol3, fcol4 = st.columns(2)
-      with fcol3:
-        format_options = (
-            ["All"] + sorted(valid_collection["Format"].dropna().unique().tolist())
-            if "Format" in valid_collection.columns else ["All"]
-        )
-        selected_format_filter2 = st.selectbox("Format", format_options, key="search_filter_format")
-      with fcol4:
-        selected_watched_filter2 = st.selectbox("Status", ["All", "Watched", "Unwatched"], key="search_filter_watched")
-
-    filters_active = bool(selected_genres) or selected_decade != "All" or selected_format_filter2 != "All" or selected_watched_filter2 != "All"
-
-    if query or filters_active:
-      results = collection_df.dropna(subset=["Title"]).copy()
-
-      if query:
-        if search_column == "All":
-          mask = results.astype(str).apply(
-              lambda x: x.str.contains(query, case=False, na=False)
-          ).any(axis=1)
-        else:
-          mask = (
-              results[search_column]
-              .astype(str)
-              .str.contains(query, case=False, na=False)
-          )
-        results = results[mask]
-
-      if selected_genres and "Genre" in results.columns:
-        def _genre_match(cell):
-          cell_genres = [g.strip() for g in str(cell).split(",")]
-          return any(g in cell_genres for g in selected_genres)
-        results = results[results["Genre"].apply(_genre_match)]
-
-      if selected_decade != "All" and "Year" in results.columns:
-        decade_start = int(selected_decade[:-1])
-        years = pd.to_numeric(results["Year"], errors="coerce")
-        results = results[(years >= decade_start) & (years < decade_start + 10)]
-
-      if selected_format_filter2 != "All" and "Format" in results.columns:
-        results = results[results["Format"] == selected_format_filter2]
-
-      if selected_watched_filter2 != "All" and "Watched" in results.columns:
-        if selected_watched_filter2 == "Watched":
-          results = results[results["Watched"].apply(is_watched)]
-        else:
-          results = results[~results["Watched"].apply(is_watched)]
-
-      if len(results) == 0:
-        no_match_msg = f"No matches for '{query}'" if query else "No matches for these filters"
-        st.warning(f"{no_match_msg} in your collection.")
-        if query and st.button(f"🛒 Add '{query}' to Wishlist", key="search_add_to_wishlist"):
-          add_to_wishlist(query)
-          st.cache_data.clear()
-          st.success(f"Added '{query}' to your Wishlist!")
-          st.rerun()
-      else:
-        st.success(f"Found {len(results)} matches — tap a row to update it:")
-        results_reset = results.reset_index(drop=True)
-        display_df = style_format_column(curated_browse_view(results_reset))
-
-        selection = st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="search_results_df",
-        )
-
-        selected_rows = selection.selection.rows if hasattr(selection, "selection") else []
-        if selected_rows:
-          movie_row = results_reset.iloc[selected_rows[0]]
-          selected_id = movie_row.get("Film ID")
-          selected_title = movie_row.get("Title", "")
-          current_watched = movie_row.get("Watched", "No")
-          current_rating_val = movie_row.get("Rating (1-5)", 3)
-          default_star_index = star_index_from_rating(current_rating_val)
-          current_date_watched = movie_row.get("Date Watched") if "Date Watched" in movie_row.index else None
-
-          st.markdown(f"**Editing: {selected_title}**")
-          with st.form(f"search_edit_form_{selected_id}"):
-            scol_a, scol_b = st.columns(2)
-            with scol_a:
-              search_watched_status = st.selectbox(
-                  "Watched", ["Yes", "No"],
-                  index=0 if is_watched(current_watched) else 1,
-                  key=f"search_watched_{selected_id}",
-              )
-            with scol_b:
-              search_rating_stars = st.selectbox(
-                  "Stars", STAR_OPTIONS, index=default_star_index,
-                  key=f"search_stars_{selected_id}",
-              )
-            search_date_watched = st.date_input(
-                "Date watched (optional)",
-                value=pd.to_datetime(current_date_watched).date() if pd.notna(current_date_watched) else datetime.date.today(),
-                key=f"search_date_{selected_id}",
+          selected_genres = st.multiselect("Genre", genre_options)
+        with fcol2:
+          if "Year" in valid_collection.columns:
+            decades_available = sorted(
+                pd.to_numeric(valid_collection["Year"], errors="coerce")
+                .dropna().apply(lambda y: int(y) // 10 * 10).unique().tolist()
             )
-            if st.form_submit_button("💾 Save Changes"):
-              if save_collection_update(selected_id, search_watched_status, search_rating_stars, search_date_watched):
-                st.cache_data.clear()
-                st.success(f"Saved '{selected_title}'!")
-                if search_rating_stars == STAR_OPTIONS[-1]:
-                  st.balloons()
-                st.rerun()
-              else:
-                st.error("Couldn't find that film in the sheet to update.")
-    else:
-      st.info("Type a keyword or set a filter above to find a film.")
+            decade_options = ["All"] + [f"{d}s" for d in decades_available]
+          else:
+            decade_options = ["All"]
+          selected_decade = st.selectbox("Decade", decade_options)
+
+        fcol3, fcol4 = st.columns(2)
+        with fcol3:
+          format_options = (
+              ["All"] + sorted(valid_collection["Format"].dropna().unique().tolist())
+              if "Format" in valid_collection.columns else ["All"]
+          )
+          selected_format_filter2 = st.selectbox("Format", format_options, key="search_filter_format")
+        with fcol4:
+          selected_watched_filter2 = st.selectbox("Status", ["All", "Watched", "Unwatched"], key="search_filter_watched")
+
+      filters_active = bool(selected_genres) or selected_decade != "All" or selected_format_filter2 != "All" or selected_watched_filter2 != "All"
+
+      if query or filters_active:
+        results = collection_df.dropna(subset=["Title"]).copy()
+
+        if query:
+          if search_column == "All":
+            mask = results.astype(str).apply(
+                lambda x: x.str.contains(query, case=False, na=False)
+            ).any(axis=1)
+          else:
+            mask = (
+                results[search_column]
+                .astype(str)
+                .str.contains(query, case=False, na=False)
+            )
+          results = results[mask]
+
+        if selected_genres and "Genre" in results.columns:
+          def _genre_match(cell):
+            cell_genres = [g.strip() for g in str(cell).split(",")]
+            return any(g in cell_genres for g in selected_genres)
+          results = results[results["Genre"].apply(_genre_match)]
+
+        if selected_decade != "All" and "Year" in results.columns:
+          decade_start = int(selected_decade[:-1])
+          years = pd.to_numeric(results["Year"], errors="coerce")
+          results = results[(years >= decade_start) & (years < decade_start + 10)]
+
+        if selected_format_filter2 != "All" and "Format" in results.columns:
+          results = results[results["Format"] == selected_format_filter2]
+
+        if selected_watched_filter2 != "All" and "Watched" in results.columns:
+          if selected_watched_filter2 == "Watched":
+            results = results[results["Watched"].apply(is_watched)]
+          else:
+            results = results[~results["Watched"].apply(is_watched)]
+
+        if len(results) == 0:
+          no_match_msg = f"No matches for '{query}'" if query else "No matches for these filters"
+          st.warning(f"{no_match_msg} in your collection.")
+          if query and st.button(f"🛒 Add '{query}' to Wishlist", key="search_add_to_wishlist"):
+            add_to_wishlist(query)
+            st.cache_data.clear()
+            st.success(f"Added '{query}' to your Wishlist!")
+            st.rerun()
+        else:
+          st.success(f"Found {len(results)} matches — tap a row to update it:")
+          results_reset = results.reset_index(drop=True)
+          display_df = style_format_column(curated_browse_view(results_reset))
+
+          selection = st.dataframe(
+              display_df,
+              use_container_width=True,
+              hide_index=True,
+              on_select="rerun",
+              selection_mode="single-row",
+              key="search_results_df",
+          )
+
+          selected_rows = selection.selection.rows if hasattr(selection, "selection") else []
+          if selected_rows:
+            movie_row = results_reset.iloc[selected_rows[0]]
+            selected_id = movie_row.get("Film ID")
+            selected_title = movie_row.get("Title", "")
+            current_watched = movie_row.get("Watched", "No")
+            current_rating_val = movie_row.get("Rating (1-5)", 3)
+            default_star_index = star_index_from_rating(current_rating_val)
+            current_date_watched = movie_row.get("Date Watched") if "Date Watched" in movie_row.index else None
+
+            st.markdown(f"**Editing: {selected_title}**")
+            with st.form(f"search_edit_form_{selected_id}"):
+              scol_a, scol_b = st.columns(2)
+              with scol_a:
+                search_watched_status = st.selectbox(
+                    "Watched", ["Yes", "No"],
+                    index=0 if is_watched(current_watched) else 1,
+                    key=f"search_watched_{selected_id}",
+                )
+              with scol_b:
+                search_rating_stars = st.selectbox(
+                    "Stars", STAR_OPTIONS, index=default_star_index,
+                    key=f"search_stars_{selected_id}",
+                )
+              search_date_watched = st.date_input(
+                  "Date watched (optional)",
+                  value=pd.to_datetime(current_date_watched).date() if pd.notna(current_date_watched) else datetime.date.today(),
+                  key=f"search_date_{selected_id}",
+              )
+              if st.form_submit_button("💾 Save Changes"):
+                if save_collection_update(selected_id, search_watched_status, search_rating_stars, search_date_watched):
+                  st.cache_data.clear()
+                  st.success(f"Saved '{selected_title}'!")
+                  if search_rating_stars == STAR_OPTIONS[-1]:
+                    st.balloons()
+                  st.rerun()
+                else:
+                  st.error("Couldn't find that film in the sheet to update.")
+      else:
+        st.info("Type a keyword or set a filter above to find a film.")
 
   # --- COLLECTION PAGE ---
   elif current_page == "Collection":
-    st.subheader("📚 Update Status & Rating")
+    with st.container(border=True):
+      st.subheader("📚 Update Status & Rating")
 
-    valid_collection_sorted = valid_collection.sort_values(by="Film ID")
+      valid_collection_sorted = valid_collection.sort_values(by="Film ID")
 
-    # Build a label -> Film ID map so selection never depends on re-parsing text
-    option_to_id = {}
-    for _, row in valid_collection_sorted.iterrows():
-      title = row.get("Title", "")
-      year_str = safe_year(row.get("Year", ""))
-      label = f"{title} ({year_str})" if year_str else f"{title}"
-      # De-duplicate identical labels (e.g. two copies of the same title/year)
-      base_label, suffix = label, 2
-      while base_label in option_to_id:
-        base_label = f"{label} [{suffix}]"
-        suffix += 1
-      option_to_id[base_label] = row.get("Film ID", "")
+      # Build a label -> Film ID map so selection never depends on re-parsing text
+      option_to_id = {}
+      for _, row in valid_collection_sorted.iterrows():
+        title = row.get("Title", "")
+        year_str = safe_year(row.get("Year", ""))
+        label = f"{title} ({year_str})" if year_str else f"{title}"
+        # De-duplicate identical labels (e.g. two copies of the same title/year)
+        base_label, suffix = label, 2
+        while base_label in option_to_id:
+          base_label = f"{label} [{suffix}]"
+          suffix += 1
+        option_to_id[base_label] = row.get("Film ID", "")
 
-    selected_option = st.selectbox(
-        "Select Movie:", ["-- Select --"] + list(option_to_id.keys())
-    )
-
-    if selected_option != "-- Select --":
-      selected_id = option_to_id[selected_option]
-      movie_row = valid_collection_sorted[
-          valid_collection_sorted["Film ID"].astype(str) == str(selected_id)
-      ].iloc[0]
-
-      selected_movie = movie_row["Title"]
-      current_watched = movie_row.get("Watched", "No")
-      current_rating_val = movie_row.get("Rating (1-5)", 3)
-      default_star_index = star_index_from_rating(current_rating_val)
-
-      with st.form("update_movie_form"):
-        st.markdown(f"**Editing:** {selected_movie}")
-        col_a, col_b = st.columns(2)
-        with col_a:
-          watched_status = st.selectbox(
-              "Watched",
-              ["Yes", "No"],
-              index=0 if is_watched(current_watched) else 1,
-          )
-        with col_b:
-          new_rating_stars = st.selectbox(
-              "Stars",
-              STAR_OPTIONS,
-              index=default_star_index,
-          )
-        current_date_watched = movie_row.get("Date Watched") if "Date Watched" in movie_row.index else None
-        new_date_watched = st.date_input(
-            "Date watched (optional)",
-            value=pd.to_datetime(current_date_watched).date() if pd.notna(current_date_watched) else datetime.date.today(),
-        )
-
-        if st.form_submit_button("💾 Save Changes"):
-          if save_collection_update(selected_id, watched_status, new_rating_stars, new_date_watched):
-            st.cache_data.clear()
-            st.success(f"Saved '{selected_movie}'!")
-            if new_rating_stars == STAR_OPTIONS[-1]:
-              st.balloons()
-            st.rerun()
-          else:
-            st.error("Couldn't find that film in the sheet to update.")
-
-      film_log = (
-          watch_log_df[watch_log_df["Film ID"].astype(str) == str(selected_id)]
-          if "Film ID" in watch_log_df.columns else pd.DataFrame()
-      )
-      if not film_log.empty:
-        log_dates = pd.to_datetime(film_log["Date Watched"], errors="coerce").dropna().sort_values()
-        if not log_dates.empty:
-          times_watched = len(log_dates)
-          first_watched = log_dates.min()
-          last_watched = log_dates.max()
-          years_since_last = (pd.Timestamp.today() - last_watched).days / 365.25
-          age_note = f" ({years_since_last:.1f} years ago)" if years_since_last >= 1 else ""
-          st.caption(
-              f"📼 Watched **{times_watched}** time{'s' if times_watched != 1 else ''} — "
-              f"first {first_watched.strftime('%d/%m/%Y')}, last {last_watched.strftime('%d/%m/%Y')}{age_note}"
-          )
-
-      with st.expander("📼 Log a rewatch"):
-        st.caption("For logging an additional watch without changing today's Watched/Rating fields above.")
-        rewatch_date = st.date_input("Date watched", value=datetime.date.today(), key=f"rewatch_date_{selected_id}")
-        rewatch_rating_choice = st.selectbox(
-            "Rating at this watch", ["(keep current rating)"] + STAR_OPTIONS, key=f"rewatch_rating_{selected_id}"
-        )
-        if st.button("Log this watch", key=f"log_rewatch_{selected_id}"):
-          rating_to_use = (
-              STAR_OPTIONS[default_star_index] if rewatch_rating_choice == "(keep current rating)"
-              else rewatch_rating_choice
-          )
-          if save_collection_update(selected_id, "Yes", rating_to_use, rewatch_date):
-            st.cache_data.clear()
-            st.success(f"Logged a watch of '{selected_movie}' on {rewatch_date.strftime('%d/%m/%Y')}!")
-            st.rerun()
-          else:
-            st.error("Couldn't find that film in the sheet to update.")
-
-      with st.expander("🗑️ Remove this film from my collection"):
-        st.warning(f"This permanently deletes '{selected_movie}' from your Collection sheet.")
-        confirm_delete = st.checkbox("Yes, I'm sure", key=f"confirm_del_{selected_id}")
-        if st.button("Remove permanently", key=f"remove_btn_{selected_id}", disabled=not confirm_delete):
-          if delete_from_collection(selected_id):
-            st.cache_data.clear()
-            st.success(f"Removed '{selected_movie}' from your collection.")
-            st.rerun()
-          else:
-            st.error("Couldn't find that film in the sheet to remove.")
-
-    film_divider()
-    st.markdown("**➕ Add a Film**")
-
-    add_tab1, add_tab2 = st.tabs(["Type it in", "📷 Scan barcode"])
-
-    with add_tab1:
-      st.markdown("**1. Title & year**")
-      mcol1, mcol2 = st.columns([2, 1])
-      with mcol1:
-        manual_title = st.text_input("Title *", key="manual_title_input")
-      with mcol2:
-        manual_year = st.number_input(
-            "Year", min_value=1900, max_value=2100,
-            value=datetime.date.today().year, step=1, key="manual_year_input",
-        )
-
-      if manual_title:
-        possible_dupes = find_possible_duplicates(manual_title)
-        if possible_dupes:
-          dupe_list = ", ".join(f"{t} ({safe_year(y)})" for t, y in possible_dupes[:3])
-          st.warning(f"⚠️ You might already own this: {dupe_list}. Still fine to add if it's a different edition.")
-
-      if tmdb_configured():
-        if st.button("🔎 Look up on TMDb", key="manual_tmdb_btn"):
-          if manual_title:
-            result = tmdb_lookup_cached(manual_title, manual_year)
-            st.session_state["manual_tmdb_result"] = result
-            if not result:
-              st.warning("No TMDb match — you can still fill in the details manually below.")
-          else:
-            st.warning("Enter a title first.")
-      else:
-        st.caption("Add a free TMDb API key to auto-fill genre, director, runtime, and plot here.")
-
-      tmdb_prefill = st.session_state.get("manual_tmdb_result")
-      if tmdb_prefill:
-        st.success(
-            f"Found on TMDb: {tmdb_prefill.get('genre') or '—'} · "
-            f"dir. {tmdb_prefill.get('director') or '—'} · "
-            f"{tmdb_prefill.get('runtime') or '—'} min"
-        )
-
-      st.markdown("**2. Confirm & add**")
-      with st.form("manual_add_form", clear_on_submit=True):
-        mcol3, mcol4 = st.columns(2)
-        with mcol3:
-          m_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"])
-        with mcol4:
-          m_runtime = st.number_input(
-              "Runtime (min)", min_value=0, max_value=600,
-              value=int(tmdb_prefill.get("runtime") or 0) if tmdb_prefill else 0,
-              step=1,
-          )
-        m_genre = st.text_input("Genre", value=(tmdb_prefill.get("genre", "") if tmdb_prefill else ""))
-        m_director = st.text_input("Director", value=(tmdb_prefill.get("director", "") if tmdb_prefill else ""))
-        m_cast = st.text_input(
-            "Cast (comma-separated, top 5)",
-            value=(", ".join(tmdb_prefill.get("cast", [])) if tmdb_prefill else ""),
-        )
-        m_cert_prefill = tmdb_prefill.get("certificate") if tmdb_prefill else None
-        m_certificate = st.selectbox(
-            "BBFC Rating",
-            BBFC_RATINGS,
-            index=BBFC_RATINGS.index(m_cert_prefill) if m_cert_prefill in BBFC_RATINGS else 0,
-        )
-        m_notes = st.text_area(
-            "Notes / Plot", value=(tmdb_prefill.get("plot", "") if tmdb_prefill else ""), height=80,
-        )
-
-        if st.form_submit_button("💾 Add to Collection"):
-          if manual_title:
-            add_to_collection({
-                "Title": manual_title,
-                "Year": manual_year,
-                "Format": m_format,
-                "Genre": m_genre,
-                "Director": m_director,
-                "Runtime (min)": m_runtime if m_runtime else None,
-                "BBFC Rating": m_certificate if m_certificate else None,
-                "Notes": m_notes,
-                "Watched": "No",
-                **cast_fields_from_string(m_cast),
-            }, full_cast=(tmdb_prefill.get("full_cast") if tmdb_prefill else None))
-            st.session_state.pop("manual_tmdb_result", None)
-            st.cache_data.clear()
-            st.success(f"Added '{manual_title}' to your collection!")
-            st.rerun()
-          else:
-            st.warning("Title is required.")
-
-    with add_tab2:
-      st.caption(
-          "Tap below and choose 'Take Photo' — this opens your phone's real "
-          "camera app (which defaults to the rear camera), not a browser "
-          "preview. Works best with good lighting and the barcode filling "
-          "most of the frame."
-      )
-      barcode_photo = st.file_uploader(
-          "Scan barcode",
-          type=["jpg", "jpeg", "png"],
-          key="barcode_uploader",
+      selected_option = st.selectbox(
+          "Select Movie:", ["-- Select --"] + list(option_to_id.keys())
       )
 
-      if barcode_photo is not None:
-        image_bytes = barcode_photo.getvalue()
-        decoded_code = decode_barcode(image_bytes)
-        if not decoded_code:
-          st.error("Couldn't read a barcode in that photo — try again with the barcode closer and well-lit.")
-        else:
-          st.info(f"Barcode: {decoded_code}")
-          upc_result = lookup_barcode(decoded_code)
+      if selected_option != "-- Select --":
+        selected_id = option_to_id[selected_option]
+        movie_row = valid_collection_sorted[
+            valid_collection_sorted["Film ID"].astype(str) == str(selected_id)
+        ].iloc[0]
 
-          prefill_title = clean_title_for_search(upc_result.get("title", "")) if upc_result else ""
-          prefill_year = upc_result.get("year") if upc_result else None
+        selected_movie = movie_row["Title"]
+        current_watched = movie_row.get("Watched", "No")
+        current_rating_val = movie_row.get("Rating (1-5)", 3)
+        default_star_index = star_index_from_rating(current_rating_val)
 
-          # Chain a TMDb lookup off the (cleaned) UPC title to also pull
-          # genre/director/runtime/plot, and a more reliable year if TMDb
-          # has one -- the UPC database frequently doesn't.
-          tmdb_result = None
-          if prefill_title and tmdb_configured():
-            tmdb_result = tmdb_lookup_cached(prefill_title, prefill_year)
-            if tmdb_result and tmdb_result.get("year"):
-              prefill_year = tmdb_result["year"]
+        with st.form("update_movie_form"):
+          st.markdown(f"**Editing:** {selected_movie}")
+          col_a, col_b = st.columns(2)
+          with col_a:
+            watched_status = st.selectbox(
+                "Watched",
+                ["Yes", "No"],
+                index=0 if is_watched(current_watched) else 1,
+            )
+          with col_b:
+            new_rating_stars = st.selectbox(
+                "Stars",
+                STAR_OPTIONS,
+                index=default_star_index,
+            )
+          current_date_watched = movie_row.get("Date Watched") if "Date Watched" in movie_row.index else None
+          new_date_watched = st.date_input(
+              "Date watched (optional)",
+              value=pd.to_datetime(current_date_watched).date() if pd.notna(current_date_watched) else datetime.date.today(),
+          )
 
-          possible_dupes = find_possible_duplicates(prefill_title) if prefill_title else []
+          if st.form_submit_button("💾 Save Changes"):
+            if save_collection_update(selected_id, watched_status, new_rating_stars, new_date_watched):
+              st.cache_data.clear()
+              st.success(f"Saved '{selected_movie}'!")
+              if new_rating_stars == STAR_OPTIONS[-1]:
+                st.balloons()
+              st.rerun()
+            else:
+              st.error("Couldn't find that film in the sheet to update.")
+
+        film_log = (
+            watch_log_df[watch_log_df["Film ID"].astype(str) == str(selected_id)]
+            if "Film ID" in watch_log_df.columns else pd.DataFrame()
+        )
+        if not film_log.empty:
+          log_dates = pd.to_datetime(film_log["Date Watched"], errors="coerce").dropna().sort_values()
+          if not log_dates.empty:
+            times_watched = len(log_dates)
+            first_watched = log_dates.min()
+            last_watched = log_dates.max()
+            years_since_last = (pd.Timestamp.today() - last_watched).days / 365.25
+            age_note = f" ({years_since_last:.1f} years ago)" if years_since_last >= 1 else ""
+            st.caption(
+                f"📼 Watched **{times_watched}** time{'s' if times_watched != 1 else ''} — "
+                f"first {first_watched.strftime('%d/%m/%Y')}, last {last_watched.strftime('%d/%m/%Y')}{age_note}"
+            )
+
+        with st.expander("📼 Log a rewatch"):
+          st.caption("For logging an additional watch without changing today's Watched/Rating fields above.")
+          rewatch_date = st.date_input("Date watched", value=datetime.date.today(), key=f"rewatch_date_{selected_id}")
+          rewatch_rating_choice = st.selectbox(
+              "Rating at this watch", ["(keep current rating)"] + STAR_OPTIONS, key=f"rewatch_rating_{selected_id}"
+          )
+          if st.button("Log this watch", key=f"log_rewatch_{selected_id}"):
+            rating_to_use = (
+                STAR_OPTIONS[default_star_index] if rewatch_rating_choice == "(keep current rating)"
+                else rewatch_rating_choice
+            )
+            if save_collection_update(selected_id, "Yes", rating_to_use, rewatch_date):
+              st.cache_data.clear()
+              st.success(f"Logged a watch of '{selected_movie}' on {rewatch_date.strftime('%d/%m/%Y')}!")
+              st.rerun()
+            else:
+              st.error("Couldn't find that film in the sheet to update.")
+
+        with st.expander("🗑️ Remove this film from my collection"):
+          st.warning(f"This permanently deletes '{selected_movie}' from your Collection sheet.")
+          confirm_delete = st.checkbox("Yes, I'm sure", key=f"confirm_del_{selected_id}")
+          if st.button("Remove permanently", key=f"remove_btn_{selected_id}", disabled=not confirm_delete):
+            if delete_from_collection(selected_id):
+              st.cache_data.clear()
+              st.success(f"Removed '{selected_movie}' from your collection.")
+              st.rerun()
+            else:
+              st.error("Couldn't find that film in the sheet to remove.")
+
+      film_divider()
+      st.markdown("**➕ Add a Film**")
+
+      add_tab1, add_tab2 = st.tabs(["Type it in", "📷 Scan barcode"])
+
+      with add_tab1:
+        st.markdown("**1. Title & year**")
+        mcol1, mcol2 = st.columns([2, 1])
+        with mcol1:
+          manual_title = st.text_input("Title *", key="manual_title_input")
+        with mcol2:
+          manual_year = st.number_input(
+              "Year", min_value=1900, max_value=2100,
+              value=datetime.date.today().year, step=1, key="manual_year_input",
+          )
+
+        if manual_title:
+          possible_dupes = find_possible_duplicates(manual_title)
           if possible_dupes:
             dupe_list = ", ".join(f"{t} ({safe_year(y)})" for t, y in possible_dupes[:3])
             st.warning(f"⚠️ You might already own this: {dupe_list}. Still fine to add if it's a different edition.")
 
-          with st.form("barcode_add_form"):
-            if upc_result:
-              st.success("Found a match online — check it's right before adding:")
+        if tmdb_configured():
+          if st.button("🔎 Look up on TMDb", key="manual_tmdb_btn"):
+            if manual_title:
+              result = tmdb_lookup_cached(manual_title, manual_year)
+              st.session_state["manual_tmdb_result"] = result
+              if not result:
+                st.warning("No TMDb match — you can still fill in the details manually below.")
             else:
-              st.warning("No online match for this barcode — enter the details manually.")
+              st.warning("Enter a title first.")
+        else:
+          st.caption("Add a free TMDb API key to auto-fill genre, director, runtime, and plot here.")
 
-            if upc_result and not prefill_year:
-              st.caption("⚠️ Couldn't confirm a release year — please check it.")
-            if tmdb_result:
-              st.caption(
-                  f"TMDb: {tmdb_result.get('genre') or '—'} · "
-                  f"dir. {tmdb_result.get('director') or '—'} · "
-                  f"{tmdb_result.get('runtime') or '—'} min"
-              )
+        tmdb_prefill = st.session_state.get("manual_tmdb_result")
+        if tmdb_prefill:
+          st.success(
+              f"Found on TMDb: {tmdb_prefill.get('genre') or '—'} · "
+              f"dir. {tmdb_prefill.get('director') or '—'} · "
+              f"{tmdb_prefill.get('runtime') or '—'} min"
+          )
 
-            b_title = st.text_input("Title *", value=prefill_title)
-            bcol1, bcol2 = st.columns(2)
-            with bcol1:
-              b_year = st.number_input(
-                  "Year",
-                  min_value=1900,
-                  max_value=2100,
-                  value=prefill_year if prefill_year else datetime.date.today().year,
-                  step=1,
-                  key="b_year",
-              )
-            with bcol2:
-              b_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"], key="b_format")
-            b_genre = st.text_input("Genre", value=(tmdb_result.get("genre", "") if tmdb_result else ""))
-            b_director = st.text_input("Director", value=(tmdb_result.get("director", "") if tmdb_result else ""))
-            b_cast = st.text_input(
-                "Cast (comma-separated, top 5)",
-                value=(", ".join(tmdb_result.get("cast", [])) if tmdb_result else ""),
-            )
-            b_runtime = st.number_input(
+        st.markdown("**2. Confirm & add**")
+        with st.form("manual_add_form", clear_on_submit=True):
+          mcol3, mcol4 = st.columns(2)
+          with mcol3:
+            m_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"])
+          with mcol4:
+            m_runtime = st.number_input(
                 "Runtime (min)", min_value=0, max_value=600,
-                value=int(tmdb_result.get("runtime") or 0) if tmdb_result else 0, step=1,
+                value=int(tmdb_prefill.get("runtime") or 0) if tmdb_prefill else 0,
+                step=1,
             )
-            b_cert_prefill = tmdb_result.get("certificate") if tmdb_result else None
-            b_certificate = st.selectbox(
-                "BBFC Rating",
-                BBFC_RATINGS,
-                index=BBFC_RATINGS.index(b_cert_prefill) if b_cert_prefill in BBFC_RATINGS else 0,
-            )
-            default_notes = f"Barcode: {decoded_code}"
-            if tmdb_result and tmdb_result.get("plot"):
-              default_notes = f"{tmdb_result['plot']}\n\nBarcode: {decoded_code}"
-            b_notes = st.text_area("Notes / Plot", value=default_notes, height=80)
-
-            if st.form_submit_button("💾 Add to Collection"):
-              if b_title:
-                add_to_collection({
-                    "Title": b_title,
-                    "Year": b_year,
-                    "Format": b_format,
-                    "Genre": b_genre,
-                    "Director": b_director,
-                    "Runtime (min)": b_runtime if b_runtime else None,
-                    "BBFC Rating": b_certificate if b_certificate else None,
-                    "Notes": b_notes,
-                    "Watched": "No",
-                    **cast_fields_from_string(b_cast),
-                }, full_cast=(tmdb_result.get("full_cast") if tmdb_result else None))
-                st.cache_data.clear()
-                st.success(f"Added '{b_title}' to your collection!")
-                st.rerun()
-              else:
-                st.warning("Title is required.")
-
-    film_divider()
-
-    with st.expander("🔄 Backfill Genre/Cast/BBFC Rating from TMDb (one-time)"):
-      st.caption(
-          "Fills in Genre, Director, full Cast, Runtime, Notes, and BBFC "
-          "Rating for films that don't have them yet — like ones added "
-          "before these features existed. Also expands the Actors/Directors "
-          "sheets to include a film's FULL cast (not just the 5 stored in "
-          "Collection's own Actor 1-5 columns), so someone who wasn't "
-          "top-billed still shows up under Browse by Actor. Never "
-          "overwrites anything you've already filled in, and it's safe to "
-          "run more than once — films already counted for someone won't be "
-          "double-counted."
-      )
-      if not tmdb_configured():
-        st.info("Add a free TMDb API key to your secrets to use this — see the Add tab for setup notes.")
-      else:
-        st.write(f"This will look up all **{len(valid_collection)}** films in your collection.")
-        confirm_backfill = st.checkbox("Yes, look these up and fill in what's missing", key="confirm_backfill")
-        if st.button("Run backfill", disabled=not confirm_backfill):
-          films_to_process = [
-              (row.get("Film ID"), row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
-              for _, row in valid_collection.iterrows()
-              if row.get("Film ID") and row.get("Title")
-          ]
-          with st.spinner(f"Looking up {len(films_to_process)} films on TMDb — this can take a couple of minutes..."):
-            updated, no_match = backfill_missing_details(films_to_process)
-          st.cache_data.clear()
-          st.success(f"Processed {len(films_to_process)} films. {updated} had a blank cell filled in. {no_match} had no TMDb match.")
-          st.rerun()
-
-    st.markdown("**Your collection**")
-    st.dataframe(
-        style_format_column(curated_browse_view(valid_collection)),
-        use_container_width=True,
-        height=350,
-        hide_index=True,
-    )
-
-  # --- WISHLIST PAGE ---
-  elif current_page == "Wishlist":
-    st.subheader("🛒 Wishlist")
-
-    st.markdown("### ➕ Add to Wishlist")
-    with st.form("wishlist_form", clear_on_submit=True):
-      new_title = st.text_input("Title *")
-      new_priority = st.slider("Priority (1-5)", 1, 5, 3)
-      new_target_price = st.number_input(
-          "Target Price (£)", min_value=0.0, value=15.00, step=0.50
-      )
-      new_notes = st.text_input("Notes")
-
-      if st.form_submit_button("💾 Add Film"):
-        if new_title:
-          add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
-          st.cache_data.clear()
-          st.success(f"Added '{new_title}'!")
-          st.rerun()
-        else:
-          st.warning("Title is required.")
-
-    with st.expander("📋 Bulk add (paste a list)"):
-      st.caption("One title per line. Everything gets added with the same priority — adjust individual ones afterward if needed.")
-      bulk_priority = st.slider("Priority for all of these", 1, 5, 3, key="bulk_priority")
-      bulk_text = st.text_area(
-          "Paste your list here",
-          height=160,
-          placeholder="Se7en\nThe Prestige\nHeat\n...",
-          key="bulk_wishlist_input",
-      )
-      if st.button("Add all", key="bulk_add_wishlist_btn"):
-        titles = [t.strip() for t in bulk_text.split("\n") if t.strip()]
-        if titles:
-          added_count = bulk_add_to_wishlist(titles, bulk_priority)
-          st.cache_data.clear()
-          st.success(f"Added {added_count} film{'s' if added_count != 1 else ''} to your Wishlist!")
-          st.rerun()
-        else:
-          st.warning("Paste at least one title, one per line.")
-
-    film_divider()
-
-    if tmdb_configured():
-      with st.expander("✨ Because you own these..."):
-        rcol1, rcol2 = st.columns([3, 1])
-        with rcol1:
-          st.caption("Pulled from a handful of random picks across your whole collection.")
-        with rcol2:
-          refresh_clicked = st.button("🔄 New picks", key="refresh_recs")
-
-        if refresh_clicked or "wishlist_rec_sources" not in st.session_state:
-          sample_n = min(5, len(valid_collection))
-          if sample_n > 0:
-            sampled = valid_collection.sample(n=sample_n)
-            st.session_state["wishlist_rec_sources"] = sampled[["Title", "Year"]].to_dict("records")
-          else:
-            st.session_state["wishlist_rec_sources"] = []
-
-        source_rows = st.session_state.get("wishlist_rec_sources", [])
-
-        if not source_rows:
-          st.caption("Add some films to your collection and suggestions will show up here.")
-        else:
-          owned_titles = set(valid_collection["Title"].dropna().str.strip().str.lower())
-          wishlist_titles = set(valid_wishlist["Title"].dropna().str.strip().str.lower()) if not valid_wishlist.empty else set()
-
-          seen = set()
-          suggestions = []
-          for source_row in source_rows:
-            source_lookup = tmdb_lookup_cached(source_row.get("Title", ""), source_row.get("Year"))
-            if not source_lookup or not source_lookup.get("id"):
-              continue
-            for rec in tmdb_recommendations_cached(source_lookup["id"]):
-              rec_title = rec.get("title", "")
-              key = rec_title.strip().lower()
-              if not rec_title or key in seen or key in owned_titles or key in wishlist_titles:
-                continue
-              seen.add(key)
-              suggestions.append(rec)
-            if len(suggestions) >= 10:
-              break
-
-          if not suggestions:
-            st.caption("No new suggestions from these picks — try refreshing for a different set.")
-          else:
-            for rec in suggestions[:10]:
-              rcol1, rcol2 = st.columns([1, 3])
-              with rcol1:
-                if rec.get("poster_path"):
-                  st.image(f"https://image.tmdb.org/t/p/w200{rec['poster_path']}")
-              with rcol2:
-                rec_label = f"{rec['title']} ({rec['year']})" if rec.get("year") else rec["title"]
-                st.markdown(f"**{rec_label}**")
-                if st.button("+ Add to Wishlist", key=f"rec_add_{rec['title']}"):
-                  add_to_wishlist(rec["title"])
-                  st.cache_data.clear()
-                  st.success(f"Added '{rec['title']}' to your Wishlist!")
-                  st.rerun()
-
-    if not valid_wishlist.empty:
-      # Deal alerts: cheapest found price has actually dropped to/below target
-      has_price_cols = (
-          "Target Price (£)" in valid_wishlist.columns
-          and "Cheapest Found (£)" in valid_wishlist.columns
-      )
-      if has_price_cols:
-        deals = valid_wishlist[
-            valid_wishlist["Cheapest Found (£)"].notna()
-            & valid_wishlist["Target Price (£)"].notna()
-            & (valid_wishlist["Cheapest Found (£)"] <= valid_wishlist["Target Price (£)"])
-        ]
-        if not deals.empty:
-          st.markdown("### 🔥 Deal Alerts")
-          for _, deal_row in deals.iterrows():
-            where = deal_row.get("Where", "")
-            where_str = f" at {where}" if pd.notna(where) and where else ""
-            st.success(
-                f"**{deal_row.get('Title','')}** — found for "
-                f"£{deal_row.get('Cheapest Found (£)'):.2f} "
-                f"(target was £{deal_row.get('Target Price (£)'):.2f}){where_str}"
-            )
-          film_divider()
-
-      for idx, row in valid_wishlist.assign(
-          _priority_sort=pd.to_numeric(valid_wishlist.get("Priority (1-5)"), errors="coerce").fillna(0)
-      ).sort_values(by="_priority_sort", ascending=False).iterrows():
-        w_title = row.get("Title", "Untitled")
-        w_priority = row.get("Priority (1-5)", "")
-        w_target = row.get("Target Price (£)", None)
-        w_cheapest = row.get("Cheapest Found (£)", None)
-
-        price_bits = []
-        if pd.notna(w_target):
-          price_bits.append(f"Target: £{w_target:.2f}")
-        if pd.notna(w_cheapest):
-          price_bits.append(f"Cheapest found: £{w_cheapest:.2f}")
-        price_line = " | ".join(price_bits) if price_bits else "No price tracked yet"
-
-        wcol1, wcol2, wcol3 = st.columns([3, 1, 1])
-        with wcol1:
-          st.markdown(
-              f"**{w_title}**  \n<span style='opacity:0.65;font-size:0.85em;'>"
-              f"Priority: {w_priority} | {price_line}</span>",
-              unsafe_allow_html=True,
+          m_genre = st.text_input("Genre", value=(tmdb_prefill.get("genre", "") if tmdb_prefill else ""))
+          m_director = st.text_input("Director", value=(tmdb_prefill.get("director", "") if tmdb_prefill else ""))
+          m_cast = st.text_input(
+              "Cast (comma-separated, top 5)",
+              value=(", ".join(tmdb_prefill.get("cast", [])) if tmdb_prefill else ""),
           )
-        with wcol2:
-          buy_clicked = st.button("✅ Bought", key=f"buy_{idx}")
-        with wcol3:
-          delete_clicked = st.button("🗑️", key=f"del_{idx}")
-
-        links = retailer_search_links(w_title)
-        st.markdown(
-            f"<span style='font-size:0.85em;'>🔗 Check price: "
-            f"<a href='{links['HMV']}' target='_blank'>HMV</a> · "
-            f"<a href='{links['Zavvi']}' target='_blank'>Zavvi</a> · "
-            f"<a href='{links['Amazon']}' target='_blank'>Amazon</a> · "
-            f"<a href='{links['CEX']}' target='_blank'>CEX</a></span>",
-            unsafe_allow_html=True,
-        )
-
-        with st.expander("🎚️ Change priority"):
-          with st.form(f"priority_form_{idx}", clear_on_submit=False):
-            new_priority_value = st.slider(
-                "Priority (1-5)", 1, 5,
-                value=int(w_priority) if pd.notna(w_priority) and str(w_priority).strip() else 3,
-                key=f"priority_slider_{idx}",
-            )
-            if st.form_submit_button("Save priority"):
-              book = openpyxl.load_workbook(FILE_PATH)
-              wish_sheet = book["Wishlist"]
-              excel_row = idx + 5
-              wish_sheet.cell(row=excel_row, column=3, value=new_priority_value)
-              book.save(FILE_PATH)
-              save_and_sync(FILE_PATH)
-              st.cache_data.clear()
-              st.success(f"Updated priority for '{w_title}' to {new_priority_value}.")
-              st.rerun()
-
-        with st.expander("💷 Log a price check"):
-          with st.form(f"price_form_{idx}", clear_on_submit=False):
-            pcol1, pcol2 = st.columns(2)
-            with pcol1:
-              logged_price = st.number_input(
-                  "Cheapest price found (£)",
-                  min_value=0.0,
-                  value=float(w_cheapest) if pd.notna(w_cheapest) else 0.0,
-                  step=0.50,
-                  key=f"price_input_{idx}",
-              )
-            with pcol2:
-              logged_where = st.text_input(
-                  "Where",
-                  value=str(row.get("Where", "") or ""),
-                  key=f"where_input_{idx}",
-              )
-            if st.form_submit_button("Save price"):
-              book = openpyxl.load_workbook(FILE_PATH)
-              wish_sheet = book["Wishlist"]
-              excel_row = idx + 5
-              wish_sheet.cell(row=excel_row, column=5, value=logged_price)
-              wish_sheet.cell(row=excel_row, column=6, value=logged_where)
-              wish_sheet.cell(
-                  row=excel_row, column=7,
-                  value=pd.Timestamp.today().strftime("%Y-%m-%d"),
-              )
-              book.save(FILE_PATH)
-              save_and_sync(FILE_PATH)
-              st.cache_data.clear()
-              st.success(f"Logged price for '{w_title}'.")
-              st.rerun()
-
-        if buy_clicked:
-          book = openpyxl.load_workbook(FILE_PATH)
-          coll_sheet = book["Collection"]
-          wish_sheet = book["Wishlist"]
-
-          next_row = coll_sheet.max_row + 1
-          new_film_id = next_film_id(collection_df)
-          coll_sheet.cell(row=next_row, column=1, value=new_film_id)
-          coll_sheet.cell(row=next_row, column=2, value=w_title)
-          coll_sheet.cell(row=next_row, column=7, value="No")  # Watched
-
-          # Remove the row from Wishlist (Excel row = df index + header offset)
-          wish_sheet.delete_rows(idx + 5)
-
-          book.save(FILE_PATH)
-          save_and_sync(FILE_PATH)
-          st.cache_data.clear()
-          st.success(f"Moved '{w_title}' to your Collection! 🎉")
-          st.rerun()
-
-        if delete_clicked:
-          book = openpyxl.load_workbook(FILE_PATH)
-          wish_sheet = book["Wishlist"]
-          wish_sheet.delete_rows(idx + 5)
-          book.save(FILE_PATH)
-          save_and_sync(FILE_PATH)
-          st.cache_data.clear()
-          st.info(f"Removed '{w_title}' from wishlist.")
-          st.rerun()
-    else:
-      st.info("Your wishlist is empty — add something above!")
-
-  # --- STATS PAGE ---
-  elif current_page == "Stats":
-    st.subheader("📊 Collection Insights")
-
-    st.markdown("### 🎊 Yearly Rewind")
-
-    def build_watch_events(collection_df_in, log_df_in):
-      """Combines proper Watch Log entries with a synthetic single entry
-      for any film whose Collection 'Date Watched' cache isn't otherwise
-      represented in the log -- covers watches saved before the Watch Log
-      existed, so old data isn't just dropped."""
-      events = []
-      if "Film ID" in log_df_in.columns and not log_df_in.empty:
-        for _, row in log_df_in.iterrows():
-          events.append({
-              "Film ID": str(row.get("Film ID", "")),
-              "Title": row.get("Title", ""),
-              "Date": row.get("Date Watched"),
-          })
-      logged_pairs = {(e["Film ID"], str(e["Date"])[:10]) for e in events}
-
-      if "Date Watched" in collection_df_in.columns:
-        for _, row in collection_df_in.iterrows():
-          dw = row.get("Date Watched")
-          if pd.isna(dw) or str(dw).strip() == "":
-            continue
-          fid = str(row.get("Film ID", ""))
-          date_str = str(dw)[:10]
-          if (fid, date_str) not in logged_pairs:
-            events.append({"Film ID": fid, "Title": row.get("Title", ""), "Date": date_str})
-
-      return pd.DataFrame(events)
-
-    watch_events = build_watch_events(valid_collection, watch_log_df)
-
-    if watch_events.empty:
-      st.info("Log some watch dates from the Update tab and your yearly rewind will show up here.")
-    else:
-      watch_events["Date"] = pd.to_datetime(watch_events["Date"], errors="coerce")
-      watch_events = watch_events.dropna(subset=["Date"])
-      years_available = sorted(watch_events["Date"].dt.year.unique().tolist(), reverse=True)
-
-      if not years_available:
-        st.info("No watch dates logged yet — mark a few films watched with a date and check back.")
-      else:
-        selected_rewind_year = st.selectbox("Year", years_available, key="rewind_year")
-        year_events = watch_events[watch_events["Date"].dt.year == selected_rewind_year].copy()
-
-        enrich_cols = [c for c in ["Film ID", "Genre", "Director", "Runtime (min)"] if c in valid_collection.columns]
-        if "Film ID" in enrich_cols and len(enrich_cols) > 1:
-          enrich_df = valid_collection[enrich_cols].copy()
-          enrich_df["Film ID"] = enrich_df["Film ID"].astype(str)
-          year_events = year_events.merge(enrich_df, on="Film ID", how="left")
-
-        total_sessions = len(year_events)
-        unique_films = year_events["Title"].nunique()
-
-        top_genre = None
-        if "Genre" in year_events.columns:
-          genre_counts = split_multi_value_counts(year_events["Genre"])
-          top_genre = genre_counts.index[0] if not genre_counts.empty else None
-
-        top_director = None
-        if "Director" in year_events.columns:
-          director_counts = split_multi_value_counts(year_events["Director"])
-          top_director = director_counts.index[0] if not director_counts.empty else None
-
-        busiest_month = None
-        if total_sessions:
-          month_counts = year_events["Date"].dt.strftime("%B").value_counts()
-          busiest_month = month_counts.index[0] if not month_counts.empty else None
-
-        longest_title = shortest_title = None
-        total_hours = None
-        if "Runtime (min)" in year_events.columns:
-          runtimes = pd.to_numeric(year_events["Runtime (min)"], errors="coerce").dropna()
-          if not runtimes.empty:
-            longest_idx = runtimes.idxmax()
-            shortest_idx = runtimes.idxmin()
-            longest_title = f"{year_events.loc[longest_idx, 'Title']} ({int(runtimes.loc[longest_idx])} min)"
-            shortest_title = f"{year_events.loc[shortest_idx, 'Title']} ({int(runtimes.loc[shortest_idx])} min)"
-            total_hours = runtimes.sum() / 60
-
-        rwcol1, rwcol2, rwcol3 = st.columns(3)
-        with rwcol1:
-          st.metric("Watch Sessions", total_sessions)
-        with rwcol2:
-          st.metric("Unique Films", unique_films)
-        with rwcol3:
-          st.metric("Hours Watched", f"{total_hours:.1f}" if total_hours else "—")
-
-        if top_genre:
-          st.markdown(f"**Top Genre:** {top_genre}")
-        if top_director:
-          st.markdown(f"**Top Director:** {top_director}")
-        if busiest_month:
-          st.markdown(f"**Busiest Month:** {busiest_month}")
-        if longest_title:
-          st.markdown(f"**Longest Watch:** {longest_title}")
-        if shortest_title:
-          st.markdown(f"**Shortest Watch:** {shortest_title}")
-
-    film_divider()
-
-    if "Genre" in valid_collection.columns:
-      st.markdown("**By Genre**")
-      genre_counts = split_multi_value_counts(valid_collection["Genre"]).head(15)
-      st.bar_chart(genre_counts)
-
-    if "Year" in valid_collection.columns:
-      st.markdown("**By Decade**")
-      decades = (
-          pd.to_numeric(valid_collection["Year"], errors="coerce")
-          .dropna()
-          .apply(lambda y: f"{int(y) // 10 * 10}s")
-      )
-      st.bar_chart(decades.value_counts().sort_index())
-
-    if "Director" in valid_collection.columns:
-      st.markdown("**Top Directors**")
-      top_directors = split_multi_value_counts(valid_collection["Director"]).head(10)
-      st.bar_chart(top_directors)
-
-    if "Watched" in valid_collection.columns:
-      watched_count = valid_collection["Watched"].apply(is_watched).sum()
-      unwatched_count = total_collection - watched_count
-      st.markdown("**Watched vs Unwatched**")
-      st.bar_chart(pd.Series(
-          {"Watched": watched_count, "Unwatched": unwatched_count}
-      ))
-
-    if "Date Watched" in valid_collection.columns:
-      last_watched_dates = pd.to_datetime(valid_collection["Date Watched"], errors="coerce")
-      forgotten = valid_collection.copy()
-      forgotten["_last_watched"] = last_watched_dates
-      forgotten = forgotten.dropna(subset=["_last_watched"])
-      forgotten["_years_ago"] = (pd.Timestamp.today() - forgotten["_last_watched"]).dt.days / 365.25
-      forgotten = forgotten[forgotten["_years_ago"] >= 3].sort_values(by="_years_ago", ascending=False)
-
-      if not forgotten.empty:
-        film_divider()
-        st.markdown("**🕰️ Forgotten Favorites** (not watched in 3+ years)")
-        for _, frow in forgotten.head(10).iterrows():
-          st.markdown(
-              f"- **{frow['Title']}** ({safe_year(frow.get('Year'))}) — "
-              f"last watched {frow['_last_watched'].strftime('%d/%m/%Y')} "
-              f"({frow['_years_ago']:.1f} years ago)"
+          m_cert_prefill = tmdb_prefill.get("certificate") if tmdb_prefill else None
+          m_certificate = st.selectbox(
+              "BBFC Rating",
+              BBFC_RATINGS,
+              index=BBFC_RATINGS.index(m_cert_prefill) if m_cert_prefill in BBFC_RATINGS else 0,
+          )
+          m_notes = st.text_area(
+              "Notes / Plot", value=(tmdb_prefill.get("plot", "") if tmdb_prefill else ""), height=80,
           )
 
-  # --- EXTRAS PAGE ---
-  elif current_page == "Extras":
-    with st.expander("💾 Backup & Export"):
-      st.caption(
-          "Downloads the exact spreadsheet the app is currently using -- "
-          "same data as what's synced to GitHub, just handy to grab a copy "
-          "any time without needing to go find it in the repo."
-      )
-      try:
-        with open(FILE_PATH, "rb") as f:
-          file_bytes = f.read()
-        backup_filename = f"Blu-ray_Collection_{datetime.date.today().strftime('%Y-%m-%d')}.xlsx"
-        st.download_button(
-            "📥 Download Current Database",
-            data=file_bytes,
-            file_name=backup_filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-      except FileNotFoundError:
-        st.error("Couldn't find the spreadsheet file to download.")
-
-      if github_sync_configured():
-        st.caption(
-            "Deletes and bulk backfills also save a timestamped safety copy "
-            "to a `backups/` folder in your GitHub repo automatically."
-        )
-
-    st.subheader("🏆 Franchises, Awards & Ratings")
-    st.caption(
-        "Franchise % Complete and Consensus scores are Excel formulas. "
-        "If you've just made an edit and they look blank, open the file in "
-        "Excel once to refresh them (this app tries to do it automatically "
-        "if LibreOffice is installed on your machine)."
-    )
-    sub_tab1, sub_tab2, sub_tab3, sub_tab4, sub_tab5, sub_tab6 = st.tabs(
-        ["Franchises", "Awards", "Ratings", "People", "Milestones", "Recently Watched"]
-    )
-    with sub_tab1:
-      if (
-          "Collection" in valid_collection.columns
-          and "Collection" in franchise_df.columns
-          and "Target Films" in franchise_df.columns
-      ):
-        owned_by_set = valid_collection["Collection"].dropna().value_counts()
-        sets_progress = franchise_df.dropna(subset=["Collection"]).copy()
-        sets_progress["Owned"] = (
-            sets_progress["Collection"].map(owned_by_set).fillna(0).astype(int)
-        )
-        sets_progress["Target"] = pd.to_numeric(
-            sets_progress["Target Films"], errors="coerce"
-        ).fillna(sets_progress["Owned"])
-        sets_progress["Missing"] = (
-            (sets_progress["Target"] - sets_progress["Owned"]).clip(lower=0).astype(int)
-        )
-        sets_progress = sets_progress.sort_values(
-            by="Missing", ascending=False
-        )
-
-        st.markdown("**📦 Box Set Completion**")
-        for _, srow in sets_progress.iterrows():
-          owned = int(srow["Owned"])
-          target = int(srow["Target"])
-          missing = int(srow["Missing"])
-          pct = min(1.0, owned / target) if target > 0 else 0.0
-          label = f"{srow['Collection']} — {owned}/{target}"
-          if missing == 0 and target > 0:
-            label += " ✅ Complete!"
-          else:
-            label += f" ({missing} to go)"
-          st.markdown(label)
-          st.progress(pct)
-        film_divider()
-
-      st.dataframe(franchise_df, use_container_width=True, height=300)
-    with sub_tab2:
-      if {"Title", "Nominations"}.issubset(awards_df.columns):
-        nominated = awards_df[
-            pd.to_numeric(awards_df["Nominations"], errors="coerce").fillna(0) > 0
-        ].copy()
-        nominated["Wins"] = pd.to_numeric(nominated.get("Wins", 0), errors="coerce").fillna(0).astype(int)
-        nominated["Nominations"] = pd.to_numeric(nominated["Nominations"], errors="coerce").fillna(0).astype(int)
-        nominated = nominated.sort_values(by=["Wins", "Nominations"], ascending=False)
-
-        if nominated.empty:
-          st.info("None of your films show any Oscar nominations in this sheet.")
-        else:
-          st.caption(f"{len(nominated)} films with at least one Oscar nomination.")
-          for _, arow in nominated.iterrows():
-            title = arow.get("Title", "Unknown")
-            year_str = safe_year(arow.get("Year", ""))
-            wins = int(arow.get("Wins", 0))
-            noms = int(arow.get("Nominations", 0))
-            categories = arow.get("Winning Categories") if wins > 0 else arow.get("All Nominated Categories")
-            categories = categories if pd.notna(categories) else ""
-
-            if wins > 0:
-              headline = f"🏆 **{title}** ({year_str}) — {wins} win{'s' if wins != 1 else ''}, {noms} nomination{'s' if noms != 1 else ''}"
+          if st.form_submit_button("💾 Add to Collection"):
+            if manual_title:
+              add_to_collection({
+                  "Title": manual_title,
+                  "Year": manual_year,
+                  "Format": m_format,
+                  "Genre": m_genre,
+                  "Director": m_director,
+                  "Runtime (min)": m_runtime if m_runtime else None,
+                  "BBFC Rating": m_certificate if m_certificate else None,
+                  "Notes": m_notes,
+                  "Watched": "No",
+                  **cast_fields_from_string(m_cast),
+              }, full_cast=(tmdb_prefill.get("full_cast") if tmdb_prefill else None))
+              st.session_state.pop("manual_tmdb_result", None)
+              st.cache_data.clear()
+              st.success(f"Added '{manual_title}' to your collection!")
+              st.rerun()
             else:
-              headline = f"🎖️ **{title}** ({year_str}) — {noms} nomination{'s' if noms != 1 else ''}"
-            st.markdown(headline)
-            if categories:
-              st.caption(categories)
-      else:
-        st.dataframe(awards_df, use_container_width=True, height=300)
-    with sub_tab3:
-      if "Rating (1-5)" in valid_collection.columns:
-        rated = valid_collection.copy()
-        rated["_stars"] = rated["Rating (1-5)"].apply(stars_to_number)
-        rated = rated[rated["_stars"].notna()].sort_values(by="_stars", ascending=False)
+              st.warning("Title is required.")
 
-        if rated.empty:
-          st.info("No films rated yet — rate some from the Update tab and they'll show up here.")
-        else:
-          st.caption(f"{len(rated)} rated film{'s' if len(rated) != 1 else ''}, highest first.")
-          for _, rrow in rated.iterrows():
-            title = rrow.get("Title", "Unknown")
-            year_str = safe_year(rrow.get("Year", ""))
-            stars = rating_stars_display(rrow.get("Rating (1-5)"))
-            st.markdown(f"<span class='stars-display'>{stars}</span> — **{title}** ({year_str})", unsafe_allow_html=True)
-      else:
-        st.dataframe(ratings_df, use_container_width=True, height=300)
+      with add_tab2:
+        st.caption(
+            "Tap below and choose 'Take Photo' — this opens your phone's real "
+            "camera app (which defaults to the rear camera), not a browser "
+            "preview. Works best with good lighting and the barcode filling "
+            "most of the frame."
+        )
+        barcode_photo = st.file_uploader(
+            "Scan barcode",
+            type=["jpg", "jpeg", "png"],
+            key="barcode_uploader",
+        )
 
-    with sub_tab4:
-      person_type = st.radio("Browse by", ["Director", "Actor"], horizontal=True, key="people_browse_type")
-      people_df = directors_df if person_type == "Director" else actors_df
-      name_col = "Director" if person_type == "Director" else "Actor"
-
-      if name_col not in people_df.columns or "Films Owned" not in people_df.columns:
-        st.info(f"No {person_type.lower()} data found in this sheet.")
-      else:
-        people_sorted = people_df.dropna(subset=[name_col]).sort_values(by="Films Owned", ascending=False)
-        options = [
-            f"{row[name_col]} ({int(row['Films Owned'])} films)"
-            for _, row in people_sorted.iterrows()
-        ]
-        name_lookup = dict(zip(options, people_sorted[name_col]))
-
-        selected_person_option = st.selectbox(f"Select a {person_type.lower()}:", ["-- Select --"] + options)
-
-        if selected_person_option != "-- Select --":
-          selected_name = name_lookup[selected_person_option]
-          person_row = people_sorted[people_sorted[name_col] == selected_name].iloc[0]
-
-          pcol1, pcol2, pcol3 = st.columns(3)
-          with pcol1:
-            st.metric("Films Owned", int(person_row.get("Films Owned", 0)))
-          with pcol2:
-            st.metric("Earliest", safe_year(person_row.get("Earliest Film")))
-          with pcol3:
-            st.metric("Latest", safe_year(person_row.get("Latest Film")))
-
-          film_ids_raw = person_row.get("Film IDs", "")
-          film_ids = [f.strip() for f in str(film_ids_raw).split(",") if f.strip()] if pd.notna(film_ids_raw) else []
-
-          if film_ids and "Film ID" in valid_collection.columns:
-            person_films = valid_collection[valid_collection["Film ID"].astype(str).isin(film_ids)]
-            st.dataframe(
-                style_format_column(curated_browse_view(person_films)),
-                use_container_width=True,
-                hide_index=True,
-            )
+        if barcode_photo is not None:
+          image_bytes = barcode_photo.getvalue()
+          decoded_code = decode_barcode(image_bytes)
+          if not decoded_code:
+            st.error("Couldn't read a barcode in that photo — try again with the barcode closer and well-lit.")
           else:
-            films_text = person_row.get("Films in Collection", "")
-            if pd.notna(films_text):
-              st.markdown(films_text)
+            st.info(f"Barcode: {decoded_code}")
+            upc_result = lookup_barcode(decoded_code)
 
+            prefill_title = clean_title_for_search(upc_result.get("title", "")) if upc_result else ""
+            prefill_year = upc_result.get("year") if upc_result else None
 
-    with sub_tab5:
-      st.subheader("🏅 Milestones & Achievements")
+            # Chain a TMDb lookup off the (cleaned) UPC title to also pull
+            # genre/director/runtime/plot, and a more reliable year if TMDb
+            # has one -- the UPC database frequently doesn't.
+            tmdb_result = None
+            if prefill_title and tmdb_configured():
+              tmdb_result = tmdb_lookup_cached(prefill_title, prefill_year)
+              if tmdb_result and tmdb_result.get("year"):
+                prefill_year = tmdb_result["year"]
 
-      milestone_thresholds = [25, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+            possible_dupes = find_possible_duplicates(prefill_title) if prefill_title else []
+            if possible_dupes:
+              dupe_list = ", ".join(f"{t} ({safe_year(y)})" for t, y in possible_dupes[:3])
+              st.warning(f"⚠️ You might already own this: {dupe_list}. Still fine to add if it's a different edition.")
 
-      def render_milestone(count, label, emoji):
-        reached = [t for t in milestone_thresholds if count >= t]
-        next_target = next((t for t in milestone_thresholds if count < t), None)
-        headline = f"{emoji} **{label}: {count}**"
-        if reached:
-          headline += f" — {reached[-1]}+ unlocked 🎉"
-        st.markdown(headline)
-        if next_target:
-          st.progress(count / next_target)
-          st.caption(f"{next_target - count} more to reach {next_target}")
+            with st.form("barcode_add_form"):
+              if upc_result:
+                st.success("Found a match online — check it's right before adding:")
+              else:
+                st.warning("No online match for this barcode — enter the details manually.")
 
-      render_milestone(total_collection, "Films Owned", "🎬")
-      watched_total = int(valid_collection["Watched"].apply(is_watched).sum()) if "Watched" in valid_collection.columns else 0
-      render_milestone(watched_total, "Films Watched", "✅")
+              if upc_result and not prefill_year:
+                st.caption("⚠️ Couldn't confirm a release year — please check it.")
+              if tmdb_result:
+                st.caption(
+                    f"TMDb: {tmdb_result.get('genre') or '—'} · "
+                    f"dir. {tmdb_result.get('director') or '—'} · "
+                    f"{tmdb_result.get('runtime') or '—'} min"
+                )
 
-      if "Best Picture" in valid_collection.columns:
-        bp_nominated = (valid_collection["Best Picture"] == "Nominated").sum()
-        bp_winner = (valid_collection["Best Picture"] == "Winner").sum()
-        bp_total = int(bp_nominated + bp_winner)
-        if bp_total:
-          render_milestone(bp_total, "Best Picture Nominees Owned", "🏆")
-          if bp_winner:
-            st.caption(f"({int(bp_winner)} of those are Best Picture winners)")
+              b_title = st.text_input("Title *", value=prefill_title)
+              bcol1, bcol2 = st.columns(2)
+              with bcol1:
+                b_year = st.number_input(
+                    "Year",
+                    min_value=1900,
+                    max_value=2100,
+                    value=prefill_year if prefill_year else datetime.date.today().year,
+                    step=1,
+                    key="b_year",
+                )
+              with bcol2:
+                b_format = st.selectbox("Format", ["Blu-ray", "4K UHD", "DVD", "Other"], key="b_format")
+              b_genre = st.text_input("Genre", value=(tmdb_result.get("genre", "") if tmdb_result else ""))
+              b_director = st.text_input("Director", value=(tmdb_result.get("director", "") if tmdb_result else ""))
+              b_cast = st.text_input(
+                  "Cast (comma-separated, top 5)",
+                  value=(", ".join(tmdb_result.get("cast", [])) if tmdb_result else ""),
+              )
+              b_runtime = st.number_input(
+                  "Runtime (min)", min_value=0, max_value=600,
+                  value=int(tmdb_result.get("runtime") or 0) if tmdb_result else 0, step=1,
+              )
+              b_cert_prefill = tmdb_result.get("certificate") if tmdb_result else None
+              b_certificate = st.selectbox(
+                  "BBFC Rating",
+                  BBFC_RATINGS,
+                  index=BBFC_RATINGS.index(b_cert_prefill) if b_cert_prefill in BBFC_RATINGS else 0,
+              )
+              default_notes = f"Barcode: {decoded_code}"
+              if tmdb_result and tmdb_result.get("plot"):
+                default_notes = f"{tmdb_result['plot']}\n\nBarcode: {decoded_code}"
+              b_notes = st.text_area("Notes / Plot", value=default_notes, height=80)
+
+              if st.form_submit_button("💾 Add to Collection"):
+                if b_title:
+                  add_to_collection({
+                      "Title": b_title,
+                      "Year": b_year,
+                      "Format": b_format,
+                      "Genre": b_genre,
+                      "Director": b_director,
+                      "Runtime (min)": b_runtime if b_runtime else None,
+                      "BBFC Rating": b_certificate if b_certificate else None,
+                      "Notes": b_notes,
+                      "Watched": "No",
+                      **cast_fields_from_string(b_cast),
+                  }, full_cast=(tmdb_result.get("full_cast") if tmdb_result else None))
+                  st.cache_data.clear()
+                  st.success(f"Added '{b_title}' to your collection!")
+                  st.rerun()
+                else:
+                  st.warning("Title is required.")
 
       film_divider()
 
-      if {"Collection", "Target Films"}.issubset(franchise_df.columns) and "Collection" in valid_collection.columns:
-        owned_by_set_ms = valid_collection["Collection"].dropna().value_counts()
-        fr_ms = franchise_df.dropna(subset=["Collection"]).copy()
-        fr_ms["Owned"] = fr_ms["Collection"].map(owned_by_set_ms).fillna(0).astype(int)
-        fr_ms["Target"] = pd.to_numeric(fr_ms["Target Films"], errors="coerce").fillna(fr_ms["Owned"])
-        completed_sets = fr_ms[(fr_ms["Target"] > 0) & (fr_ms["Owned"] >= fr_ms["Target"])]
+      with st.expander("🔄 Backfill Genre/Cast/BBFC Rating from TMDb (one-time)"):
+        st.caption(
+            "Fills in Genre, Director, full Cast, Runtime, Notes, and BBFC "
+            "Rating for films that don't have them yet — like ones added "
+            "before these features existed. Also expands the Actors/Directors "
+            "sheets to include a film's FULL cast (not just the 5 stored in "
+            "Collection's own Actor 1-5 columns), so someone who wasn't "
+            "top-billed still shows up under Browse by Actor. Never "
+            "overwrites anything you've already filled in, and it's safe to "
+            "run more than once — films already counted for someone won't be "
+            "double-counted."
+        )
+        if not tmdb_configured():
+          st.info("Add a free TMDb API key to your secrets to use this — see the Add tab for setup notes.")
+        else:
+          st.write(f"This will look up all **{len(valid_collection)}** films in your collection.")
+          confirm_backfill = st.checkbox("Yes, look these up and fill in what's missing", key="confirm_backfill")
+          if st.button("Run backfill", disabled=not confirm_backfill):
+            films_to_process = [
+                (row.get("Film ID"), row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
+                for _, row in valid_collection.iterrows()
+                if row.get("Film ID") and row.get("Title")
+            ]
+            with st.spinner(f"Looking up {len(films_to_process)} films on TMDb — this can take a couple of minutes..."):
+              updated, no_match = backfill_missing_details(films_to_process)
+            st.cache_data.clear()
+            st.success(f"Processed {len(films_to_process)} films. {updated} had a blank cell filled in. {no_match} had no TMDb match.")
+            st.rerun()
 
-        if not completed_sets.empty:
-          st.markdown("**📦 Completed Box Sets**")
-          for _, crow in completed_sets.iterrows():
-            st.markdown(f"✅ All {int(crow['Target'])} **{crow['Collection']}** films owned!")
-          film_divider()
+      st.markdown("**Your collection**")
+      st.dataframe(
+          style_format_column(curated_browse_view(valid_collection)),
+          use_container_width=True,
+          height=350,
+          hide_index=True,
+      )
+
+  # --- WISHLIST PAGE ---
+  elif current_page == "Wishlist":
+    with st.container(border=True):
+      st.subheader("🛒 Wishlist")
+
+      st.markdown("### ➕ Add to Wishlist")
+      with st.form("wishlist_form", clear_on_submit=True):
+        new_title = st.text_input("Title *")
+        new_priority = st.slider("Priority (1-5)", 1, 5, 3)
+        new_target_price = st.number_input(
+            "Target Price (£)", min_value=0.0, value=15.00, step=0.50
+        )
+        new_notes = st.text_input("Notes")
+
+        if st.form_submit_button("💾 Add Film"):
+          if new_title:
+            add_to_wishlist(new_title, new_priority, new_target_price, new_notes)
+            st.cache_data.clear()
+            st.success(f"Added '{new_title}'!")
+            st.rerun()
+          else:
+            st.warning("Title is required.")
+
+      with st.expander("📋 Bulk add (paste a list)"):
+        st.caption("One title per line. Everything gets added with the same priority — adjust individual ones afterward if needed.")
+        bulk_priority = st.slider("Priority for all of these", 1, 5, 3, key="bulk_priority")
+        bulk_text = st.text_area(
+            "Paste your list here",
+            height=160,
+            placeholder="Se7en\nThe Prestige\nHeat\n...",
+            key="bulk_wishlist_input",
+        )
+        if st.button("Add all", key="bulk_add_wishlist_btn"):
+          titles = [t.strip() for t in bulk_text.split("\n") if t.strip()]
+          if titles:
+            added_count = bulk_add_to_wishlist(titles, bulk_priority)
+            st.cache_data.clear()
+            st.success(f"Added {added_count} film{'s' if added_count != 1 else ''} to your Wishlist!")
+            st.rerun()
+          else:
+            st.warning("Paste at least one title, one per line.")
+
+      film_divider()
+
+      if tmdb_configured():
+        with st.expander("✨ Because you own these..."):
+          rcol1, rcol2 = st.columns([3, 1])
+          with rcol1:
+            st.caption("Pulled from a handful of random picks across your whole collection.")
+          with rcol2:
+            refresh_clicked = st.button("🔄 New picks", key="refresh_recs")
+
+          if refresh_clicked or "wishlist_rec_sources" not in st.session_state:
+            sample_n = min(5, len(valid_collection))
+            if sample_n > 0:
+              sampled = valid_collection.sample(n=sample_n)
+              st.session_state["wishlist_rec_sources"] = sampled[["Title", "Year"]].to_dict("records")
+            else:
+              st.session_state["wishlist_rec_sources"] = []
+
+          source_rows = st.session_state.get("wishlist_rec_sources", [])
+
+          if not source_rows:
+            st.caption("Add some films to your collection and suggestions will show up here.")
+          else:
+            owned_titles = set(valid_collection["Title"].dropna().str.strip().str.lower())
+            wishlist_titles = set(valid_wishlist["Title"].dropna().str.strip().str.lower()) if not valid_wishlist.empty else set()
+
+            seen = set()
+            suggestions = []
+            for source_row in source_rows:
+              source_lookup = tmdb_lookup_cached(source_row.get("Title", ""), source_row.get("Year"))
+              if not source_lookup or not source_lookup.get("id"):
+                continue
+              for rec in tmdb_recommendations_cached(source_lookup["id"]):
+                rec_title = rec.get("title", "")
+                key = rec_title.strip().lower()
+                if not rec_title or key in seen or key in owned_titles or key in wishlist_titles:
+                  continue
+                seen.add(key)
+                suggestions.append(rec)
+              if len(suggestions) >= 10:
+                break
+
+            if not suggestions:
+              st.caption("No new suggestions from these picks — try refreshing for a different set.")
+            else:
+              for rec in suggestions[:10]:
+                rcol1, rcol2 = st.columns([1, 3])
+                with rcol1:
+                  if rec.get("poster_path"):
+                    st.image(f"https://image.tmdb.org/t/p/w200{rec['poster_path']}")
+                with rcol2:
+                  rec_label = f"{rec['title']} ({rec['year']})" if rec.get("year") else rec["title"]
+                  st.markdown(f"**{rec_label}**")
+                  if st.button("+ Add to Wishlist", key=f"rec_add_{rec['title']}"):
+                    add_to_wishlist(rec["title"])
+                    st.cache_data.clear()
+                    st.success(f"Added '{rec['title']}' to your Wishlist!")
+                    st.rerun()
+
+      if not valid_wishlist.empty:
+        # Deal alerts: cheapest found price has actually dropped to/below target
+        has_price_cols = (
+            "Target Price (£)" in valid_wishlist.columns
+            and "Cheapest Found (£)" in valid_wishlist.columns
+        )
+        if has_price_cols:
+          deals = valid_wishlist[
+              valid_wishlist["Cheapest Found (£)"].notna()
+              & valid_wishlist["Target Price (£)"].notna()
+              & (valid_wishlist["Cheapest Found (£)"] <= valid_wishlist["Target Price (£)"])
+          ]
+          if not deals.empty:
+            st.markdown("### 🔥 Deal Alerts")
+            for _, deal_row in deals.iterrows():
+              where = deal_row.get("Where", "")
+              where_str = f" at {where}" if pd.notna(where) and where else ""
+              st.success(
+                  f"**{deal_row.get('Title','')}** — found for "
+                  f"£{deal_row.get('Cheapest Found (£)'):.2f} "
+                  f"(target was £{deal_row.get('Target Price (£)'):.2f}){where_str}"
+              )
+            film_divider()
+
+        for idx, row in valid_wishlist.assign(
+            _priority_sort=pd.to_numeric(valid_wishlist.get("Priority (1-5)"), errors="coerce").fillna(0)
+        ).sort_values(by="_priority_sort", ascending=False).iterrows():
+          w_title = row.get("Title", "Untitled")
+          w_priority = row.get("Priority (1-5)", "")
+          w_target = row.get("Target Price (£)", None)
+          w_cheapest = row.get("Cheapest Found (£)", None)
+
+          price_bits = []
+          if pd.notna(w_target):
+            price_bits.append(f"Target: £{w_target:.2f}")
+          if pd.notna(w_cheapest):
+            price_bits.append(f"Cheapest found: £{w_cheapest:.2f}")
+          price_line = " | ".join(price_bits) if price_bits else "No price tracked yet"
+
+          wcol1, wcol2, wcol3 = st.columns([3, 1, 1])
+          with wcol1:
+            st.markdown(
+                f"**{w_title}**  \n<span style='opacity:0.65;font-size:0.85em;'>"
+                f"Priority: {w_priority} | {price_line}</span>",
+                unsafe_allow_html=True,
+            )
+          with wcol2:
+            buy_clicked = st.button("✅ Bought", key=f"buy_{idx}")
+          with wcol3:
+            delete_clicked = st.button("🗑️", key=f"del_{idx}")
+
+          links = retailer_search_links(w_title)
+          st.markdown(
+              f"<span style='font-size:0.85em;'>🔗 Check price: "
+              f"<a href='{links['HMV']}' target='_blank'>HMV</a> · "
+              f"<a href='{links['Zavvi']}' target='_blank'>Zavvi</a> · "
+              f"<a href='{links['Amazon']}' target='_blank'>Amazon</a> · "
+              f"<a href='{links['CEX']}' target='_blank'>CEX</a></span>",
+              unsafe_allow_html=True,
+          )
+
+          with st.expander("🎚️ Change priority"):
+            with st.form(f"priority_form_{idx}", clear_on_submit=False):
+              new_priority_value = st.slider(
+                  "Priority (1-5)", 1, 5,
+                  value=int(w_priority) if pd.notna(w_priority) and str(w_priority).strip() else 3,
+                  key=f"priority_slider_{idx}",
+              )
+              if st.form_submit_button("Save priority"):
+                book = openpyxl.load_workbook(FILE_PATH)
+                wish_sheet = book["Wishlist"]
+                excel_row = idx + 5
+                wish_sheet.cell(row=excel_row, column=3, value=new_priority_value)
+                book.save(FILE_PATH)
+                save_and_sync(FILE_PATH)
+                st.cache_data.clear()
+                st.success(f"Updated priority for '{w_title}' to {new_priority_value}.")
+                st.rerun()
+
+          with st.expander("💷 Log a price check"):
+            with st.form(f"price_form_{idx}", clear_on_submit=False):
+              pcol1, pcol2 = st.columns(2)
+              with pcol1:
+                logged_price = st.number_input(
+                    "Cheapest price found (£)",
+                    min_value=0.0,
+                    value=float(w_cheapest) if pd.notna(w_cheapest) else 0.0,
+                    step=0.50,
+                    key=f"price_input_{idx}",
+                )
+              with pcol2:
+                logged_where = st.text_input(
+                    "Where",
+                    value=str(row.get("Where", "") or ""),
+                    key=f"where_input_{idx}",
+                )
+              if st.form_submit_button("Save price"):
+                book = openpyxl.load_workbook(FILE_PATH)
+                wish_sheet = book["Wishlist"]
+                excel_row = idx + 5
+                wish_sheet.cell(row=excel_row, column=5, value=logged_price)
+                wish_sheet.cell(row=excel_row, column=6, value=logged_where)
+                wish_sheet.cell(
+                    row=excel_row, column=7,
+                    value=pd.Timestamp.today().strftime("%Y-%m-%d"),
+                )
+                book.save(FILE_PATH)
+                save_and_sync(FILE_PATH)
+                st.cache_data.clear()
+                st.success(f"Logged price for '{w_title}'.")
+                st.rerun()
+
+          if buy_clicked:
+            book = openpyxl.load_workbook(FILE_PATH)
+            coll_sheet = book["Collection"]
+            wish_sheet = book["Wishlist"]
+
+            next_row = coll_sheet.max_row + 1
+            new_film_id = next_film_id(collection_df)
+            coll_sheet.cell(row=next_row, column=1, value=new_film_id)
+            coll_sheet.cell(row=next_row, column=2, value=w_title)
+            coll_sheet.cell(row=next_row, column=7, value="No")  # Watched
+
+            # Remove the row from Wishlist (Excel row = df index + header offset)
+            wish_sheet.delete_rows(idx + 5)
+
+            book.save(FILE_PATH)
+            save_and_sync(FILE_PATH)
+            st.cache_data.clear()
+            st.success(f"Moved '{w_title}' to your Collection! 🎉")
+            st.rerun()
+
+          if delete_clicked:
+            book = openpyxl.load_workbook(FILE_PATH)
+            wish_sheet = book["Wishlist"]
+            wish_sheet.delete_rows(idx + 5)
+            book.save(FILE_PATH)
+            save_and_sync(FILE_PATH)
+            st.cache_data.clear()
+            st.info(f"Removed '{w_title}' from wishlist.")
+            st.rerun()
+      else:
+        st.info("Your wishlist is empty — add something above!")
+
+  # --- STATS PAGE ---
+  elif current_page == "Stats":
+    with st.container(border=True):
+      st.subheader("📊 Collection Insights")
+
+      st.markdown("### 🎊 Yearly Rewind")
+
+      def build_watch_events(collection_df_in, log_df_in):
+        """Combines proper Watch Log entries with a synthetic single entry
+        for any film whose Collection 'Date Watched' cache isn't otherwise
+        represented in the log -- covers watches saved before the Watch Log
+        existed, so old data isn't just dropped."""
+        events = []
+        if "Film ID" in log_df_in.columns and not log_df_in.empty:
+          for _, row in log_df_in.iterrows():
+            events.append({
+                "Film ID": str(row.get("Film ID", "")),
+                "Title": row.get("Title", ""),
+                "Date": row.get("Date Watched"),
+            })
+        logged_pairs = {(e["Film ID"], str(e["Date"])[:10]) for e in events}
+
+        if "Date Watched" in collection_df_in.columns:
+          for _, row in collection_df_in.iterrows():
+            dw = row.get("Date Watched")
+            if pd.isna(dw) or str(dw).strip() == "":
+              continue
+            fid = str(row.get("Film ID", ""))
+            date_str = str(dw)[:10]
+            if (fid, date_str) not in logged_pairs:
+              events.append({"Film ID": fid, "Title": row.get("Title", ""), "Date": date_str})
+
+        return pd.DataFrame(events)
+
+      watch_events = build_watch_events(valid_collection, watch_log_df)
+
+      if watch_events.empty:
+        st.info("Log some watch dates from the Update tab and your yearly rewind will show up here.")
+      else:
+        watch_events["Date"] = pd.to_datetime(watch_events["Date"], errors="coerce")
+        watch_events = watch_events.dropna(subset=["Date"])
+        years_available = sorted(watch_events["Date"].dt.year.unique().tolist(), reverse=True)
+
+        if not years_available:
+          st.info("No watch dates logged yet — mark a few films watched with a date and check back.")
+        else:
+          selected_rewind_year = st.selectbox("Year", years_available, key="rewind_year")
+          year_events = watch_events[watch_events["Date"].dt.year == selected_rewind_year].copy()
+
+          enrich_cols = [c for c in ["Film ID", "Genre", "Director", "Runtime (min)"] if c in valid_collection.columns]
+          if "Film ID" in enrich_cols and len(enrich_cols) > 1:
+            enrich_df = valid_collection[enrich_cols].copy()
+            enrich_df["Film ID"] = enrich_df["Film ID"].astype(str)
+            year_events = year_events.merge(enrich_df, on="Film ID", how="left")
+
+          total_sessions = len(year_events)
+          unique_films = year_events["Title"].nunique()
+
+          top_genre = None
+          if "Genre" in year_events.columns:
+            genre_counts = split_multi_value_counts(year_events["Genre"])
+            top_genre = genre_counts.index[0] if not genre_counts.empty else None
+
+          top_director = None
+          if "Director" in year_events.columns:
+            director_counts = split_multi_value_counts(year_events["Director"])
+            top_director = director_counts.index[0] if not director_counts.empty else None
+
+          busiest_month = None
+          if total_sessions:
+            month_counts = year_events["Date"].dt.strftime("%B").value_counts()
+            busiest_month = month_counts.index[0] if not month_counts.empty else None
+
+          longest_title = shortest_title = None
+          total_hours = None
+          if "Runtime (min)" in year_events.columns:
+            runtimes = pd.to_numeric(year_events["Runtime (min)"], errors="coerce").dropna()
+            if not runtimes.empty:
+              longest_idx = runtimes.idxmax()
+              shortest_idx = runtimes.idxmin()
+              longest_title = f"{year_events.loc[longest_idx, 'Title']} ({int(runtimes.loc[longest_idx])} min)"
+              shortest_title = f"{year_events.loc[shortest_idx, 'Title']} ({int(runtimes.loc[shortest_idx])} min)"
+              total_hours = runtimes.sum() / 60
+
+          rwcol1, rwcol2, rwcol3 = st.columns(3)
+          with rwcol1:
+            st.metric("Watch Sessions", total_sessions)
+          with rwcol2:
+            st.metric("Unique Films", unique_films)
+          with rwcol3:
+            st.metric("Hours Watched", f"{total_hours:.1f}" if total_hours else "—")
+
+          if top_genre:
+            st.markdown(f"**Top Genre:** {top_genre}")
+          if top_director:
+            st.markdown(f"**Top Director:** {top_director}")
+          if busiest_month:
+            st.markdown(f"**Busiest Month:** {busiest_month}")
+          if longest_title:
+            st.markdown(f"**Longest Watch:** {longest_title}")
+          if shortest_title:
+            st.markdown(f"**Shortest Watch:** {shortest_title}")
+
+      film_divider()
+
+      if "Genre" in valid_collection.columns:
+        st.markdown("**By Genre**")
+        genre_counts = split_multi_value_counts(valid_collection["Genre"]).head(15)
+        st.bar_chart(genre_counts)
+
+      if "Year" in valid_collection.columns:
+        st.markdown("**By Decade**")
+        decades = (
+            pd.to_numeric(valid_collection["Year"], errors="coerce")
+            .dropna()
+            .apply(lambda y: f"{int(y) // 10 * 10}s")
+        )
+        st.bar_chart(decades.value_counts().sort_index())
 
       if "Director" in valid_collection.columns:
-        director_counts = split_multi_value_counts(valid_collection["Director"])
-        big_directors = director_counts[director_counts >= 5]
-        if not big_directors.empty:
-          st.markdown("**🎥 Director Milestones**")
-          for dname, dcount in big_directors.head(10).items():
-            st.markdown(f"🎬 {int(dcount)} **{dname}** films owned")
+        st.markdown("**Top Directors**")
+        top_directors = split_multi_value_counts(valid_collection["Director"]).head(10)
+        st.bar_chart(top_directors)
 
-    with sub_tab6:
-      st.subheader("🕓 Recently Watched")
-      if "Date Watched" not in valid_collection.columns:
-        st.info("Log some watch dates from the Collection tab and your recently watched films will show up here.")
-      else:
-        recent = valid_collection.copy()
-        recent["_last_watched"] = pd.to_datetime(recent["Date Watched"], errors="coerce")
-        recent = recent.dropna(subset=["_last_watched"]).sort_values(by="_last_watched", ascending=False).head(5)
+      if "Watched" in valid_collection.columns:
+        watched_count = valid_collection["Watched"].apply(is_watched).sum()
+        unwatched_count = total_collection - watched_count
+        st.markdown("**Watched vs Unwatched**")
+        st.bar_chart(pd.Series(
+            {"Watched": watched_count, "Unwatched": unwatched_count}
+        ))
 
-        if recent.empty:
-          st.info("No watch dates logged yet — mark a film watched with a date from the Collection tab.")
-        else:
-          for _, rrow in recent.iterrows():
-            title = rrow.get("Title", "Unknown")
-            year_str = safe_year(rrow.get("Year"))
-            watched_date = rrow["_last_watched"].strftime("%d/%m/%Y")
+      if "Date Watched" in valid_collection.columns:
+        last_watched_dates = pd.to_datetime(valid_collection["Date Watched"], errors="coerce")
+        forgotten = valid_collection.copy()
+        forgotten["_last_watched"] = last_watched_dates
+        forgotten = forgotten.dropna(subset=["_last_watched"])
+        forgotten["_years_ago"] = (pd.Timestamp.today() - forgotten["_last_watched"]).dt.days / 365.25
+        forgotten = forgotten[forgotten["_years_ago"] >= 3].sort_values(by="_years_ago", ascending=False)
 
-            stars_line = f"Watched {watched_date}"
-            if "Rating (1-5)" in rrow.index:
-              stars = rating_stars_display(rrow.get("Rating (1-5)"))
-              if stars != "Not rated yet":
-                stars_line += f" · <span class='stars-display'>{stars}</span>"
+        if not forgotten.empty:
+          film_divider()
+          st.markdown("**🕰️ Forgotten Favorites** (not watched in 3+ years)")
+          for _, frow in forgotten.head(10).iterrows():
+            st.markdown(
+                f"- **{frow['Title']}** ({safe_year(frow.get('Year'))}) — "
+                f"last watched {frow['_last_watched'].strftime('%d/%m/%Y')} "
+                f"({frow['_years_ago']:.1f} years ago)"
+            )
 
-            pcol1, pcol2 = st.columns([1, 3])
-            with pcol1:
-              poster_path = None
-              if tmdb_configured():
-                poster_lookup = tmdb_lookup_cached(title, rrow.get("Year"))
-                if poster_lookup:
-                  poster_path = poster_lookup.get("poster_path")
-              if poster_path:
-                st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
+  # --- EXTRAS PAGE ---
+  elif current_page == "Extras":
+    with st.container(border=True):
+      with st.expander("💾 Backup & Export"):
+        st.caption(
+            "Downloads the exact spreadsheet the app is currently using -- "
+            "same data as what's synced to GitHub, just handy to grab a copy "
+            "any time without needing to go find it in the repo."
+        )
+        try:
+          with open(FILE_PATH, "rb") as f:
+            file_bytes = f.read()
+          backup_filename = f"Blu-ray_Collection_{datetime.date.today().strftime('%Y-%m-%d')}.xlsx"
+          st.download_button(
+              "📥 Download Current Database",
+              data=file_bytes,
+              file_name=backup_filename,
+              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          )
+        except FileNotFoundError:
+          st.error("Couldn't find the spreadsheet file to download.")
+
+        if github_sync_configured():
+          st.caption(
+              "Deletes and bulk backfills also save a timestamped safety copy "
+              "to a `backups/` folder in your GitHub repo automatically."
+          )
+
+      st.subheader("🏆 Franchises, Awards & Ratings")
+      st.caption(
+          "Franchise % Complete and Consensus scores are Excel formulas. "
+          "If you've just made an edit and they look blank, open the file in "
+          "Excel once to refresh them (this app tries to do it automatically "
+          "if LibreOffice is installed on your machine)."
+      )
+      sub_tab1, sub_tab2, sub_tab3, sub_tab4, sub_tab5, sub_tab6 = st.tabs(
+          ["Franchises", "Awards", "Ratings", "People", "Milestones", "Recently Watched"]
+      )
+      with sub_tab1:
+        if (
+            "Collection" in valid_collection.columns
+            and "Collection" in franchise_df.columns
+            and "Target Films" in franchise_df.columns
+        ):
+          owned_by_set = valid_collection["Collection"].dropna().value_counts()
+          sets_progress = franchise_df.dropna(subset=["Collection"]).copy()
+          sets_progress["Owned"] = (
+              sets_progress["Collection"].map(owned_by_set).fillna(0).astype(int)
+          )
+          sets_progress["Target"] = pd.to_numeric(
+              sets_progress["Target Films"], errors="coerce"
+          ).fillna(sets_progress["Owned"])
+          sets_progress["Missing"] = (
+              (sets_progress["Target"] - sets_progress["Owned"]).clip(lower=0).astype(int)
+          )
+          sets_progress = sets_progress.sort_values(
+              by="Missing", ascending=False
+          )
+
+          st.markdown("**📦 Box Set Completion**")
+          for _, srow in sets_progress.iterrows():
+            owned = int(srow["Owned"])
+            target = int(srow["Target"])
+            missing = int(srow["Missing"])
+            pct = min(1.0, owned / target) if target > 0 else 0.0
+            label = f"{srow['Collection']} — {owned}/{target}"
+            if missing == 0 and target > 0:
+              label += " ✅ Complete!"
+            else:
+              label += f" ({missing} to go)"
+            st.markdown(label)
+            st.progress(pct)
+          film_divider()
+
+        st.dataframe(franchise_df, use_container_width=True, height=300)
+      with sub_tab2:
+        if {"Title", "Nominations"}.issubset(awards_df.columns):
+          nominated = awards_df[
+              pd.to_numeric(awards_df["Nominations"], errors="coerce").fillna(0) > 0
+          ].copy()
+          nominated["Wins"] = pd.to_numeric(nominated.get("Wins", 0), errors="coerce").fillna(0).astype(int)
+          nominated["Nominations"] = pd.to_numeric(nominated["Nominations"], errors="coerce").fillna(0).astype(int)
+          nominated = nominated.sort_values(by=["Wins", "Nominations"], ascending=False)
+
+          if nominated.empty:
+            st.info("None of your films show any Oscar nominations in this sheet.")
+          else:
+            st.caption(f"{len(nominated)} films with at least one Oscar nomination.")
+            for _, arow in nominated.iterrows():
+              title = arow.get("Title", "Unknown")
+              year_str = safe_year(arow.get("Year", ""))
+              wins = int(arow.get("Wins", 0))
+              noms = int(arow.get("Nominations", 0))
+              categories = arow.get("Winning Categories") if wins > 0 else arow.get("All Nominated Categories")
+              categories = categories if pd.notna(categories) else ""
+
+              if wins > 0:
+                headline = f"🏆 **{title}** ({year_str}) — {wins} win{'s' if wins != 1 else ''}, {noms} nomination{'s' if noms != 1 else ''}"
               else:
-                st.caption("(no poster found)")
-            with pcol2:
-              st.markdown(f"🎬 **{title}** ({year_str})")
-              st.markdown(f"<span style='opacity:0.7; font-size:0.9em;'>{stars_line}</span>", unsafe_allow_html=True)
+                headline = f"🎖️ **{title}** ({year_str}) — {noms} nomination{'s' if noms != 1 else ''}"
+              st.markdown(headline)
+              if categories:
+                st.caption(categories)
+        else:
+          st.dataframe(awards_df, use_container_width=True, height=300)
+      with sub_tab3:
+        if "Rating (1-5)" in valid_collection.columns:
+          rated = valid_collection.copy()
+          rated["_stars"] = rated["Rating (1-5)"].apply(stars_to_number)
+          rated = rated[rated["_stars"].notna()].sort_values(by="_stars", ascending=False)
 
+          if rated.empty:
+            st.info("No films rated yet — rate some from the Update tab and they'll show up here.")
+          else:
+            st.caption(f"{len(rated)} rated film{'s' if len(rated) != 1 else ''}, highest first.")
+            for _, rrow in rated.iterrows():
+              title = rrow.get("Title", "Unknown")
+              year_str = safe_year(rrow.get("Year", ""))
+              stars = rating_stars_display(rrow.get("Rating (1-5)"))
+              st.markdown(f"<span class='stars-display'>{stars}</span> — **{title}** ({year_str})", unsafe_allow_html=True)
+        else:
+          st.dataframe(ratings_df, use_container_width=True, height=300)
+
+      with sub_tab4:
+        person_type = st.radio("Browse by", ["Director", "Actor"], horizontal=True, key="people_browse_type")
+        people_df = directors_df if person_type == "Director" else actors_df
+        name_col = "Director" if person_type == "Director" else "Actor"
+
+        if name_col not in people_df.columns or "Films Owned" not in people_df.columns:
+          st.info(f"No {person_type.lower()} data found in this sheet.")
+        else:
+          people_sorted = people_df.dropna(subset=[name_col]).sort_values(by="Films Owned", ascending=False)
+          options = [
+              f"{row[name_col]} ({int(row['Films Owned'])} films)"
+              for _, row in people_sorted.iterrows()
+          ]
+          name_lookup = dict(zip(options, people_sorted[name_col]))
+
+          selected_person_option = st.selectbox(f"Select a {person_type.lower()}:", ["-- Select --"] + options)
+
+          if selected_person_option != "-- Select --":
+            selected_name = name_lookup[selected_person_option]
+            person_row = people_sorted[people_sorted[name_col] == selected_name].iloc[0]
+
+            pcol1, pcol2, pcol3 = st.columns(3)
+            with pcol1:
+              st.metric("Films Owned", int(person_row.get("Films Owned", 0)))
+            with pcol2:
+              st.metric("Earliest", safe_year(person_row.get("Earliest Film")))
+            with pcol3:
+              st.metric("Latest", safe_year(person_row.get("Latest Film")))
+
+            film_ids_raw = person_row.get("Film IDs", "")
+            film_ids = [f.strip() for f in str(film_ids_raw).split(",") if f.strip()] if pd.notna(film_ids_raw) else []
+
+            if film_ids and "Film ID" in valid_collection.columns:
+              person_films = valid_collection[valid_collection["Film ID"].astype(str).isin(film_ids)]
+              st.dataframe(
+                  style_format_column(curated_browse_view(person_films)),
+                  use_container_width=True,
+                  hide_index=True,
+              )
+            else:
+              films_text = person_row.get("Films in Collection", "")
+              if pd.notna(films_text):
+                st.markdown(films_text)
+
+
+      with sub_tab5:
+        st.subheader("🏅 Milestones & Achievements")
+
+        milestone_thresholds = [25, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+
+        def render_milestone(count, label, emoji):
+          reached = [t for t in milestone_thresholds if count >= t]
+          next_target = next((t for t in milestone_thresholds if count < t), None)
+          headline = f"{emoji} **{label}: {count}**"
+          if reached:
+            headline += f" — {reached[-1]}+ unlocked 🎉"
+          st.markdown(headline)
+          if next_target:
+            st.progress(count / next_target)
+            st.caption(f"{next_target - count} more to reach {next_target}")
+
+        render_milestone(total_collection, "Films Owned", "🎬")
+        watched_total = int(valid_collection["Watched"].apply(is_watched).sum()) if "Watched" in valid_collection.columns else 0
+        render_milestone(watched_total, "Films Watched", "✅")
+
+        if "Best Picture" in valid_collection.columns:
+          bp_nominated = (valid_collection["Best Picture"] == "Nominated").sum()
+          bp_winner = (valid_collection["Best Picture"] == "Winner").sum()
+          bp_total = int(bp_nominated + bp_winner)
+          if bp_total:
+            render_milestone(bp_total, "Best Picture Nominees Owned", "🏆")
+            if bp_winner:
+              st.caption(f"({int(bp_winner)} of those are Best Picture winners)")
+
+        film_divider()
+
+        if {"Collection", "Target Films"}.issubset(franchise_df.columns) and "Collection" in valid_collection.columns:
+          owned_by_set_ms = valid_collection["Collection"].dropna().value_counts()
+          fr_ms = franchise_df.dropna(subset=["Collection"]).copy()
+          fr_ms["Owned"] = fr_ms["Collection"].map(owned_by_set_ms).fillna(0).astype(int)
+          fr_ms["Target"] = pd.to_numeric(fr_ms["Target Films"], errors="coerce").fillna(fr_ms["Owned"])
+          completed_sets = fr_ms[(fr_ms["Target"] > 0) & (fr_ms["Owned"] >= fr_ms["Target"])]
+
+          if not completed_sets.empty:
+            st.markdown("**📦 Completed Box Sets**")
+            for _, crow in completed_sets.iterrows():
+              st.markdown(f"✅ All {int(crow['Target'])} **{crow['Collection']}** films owned!")
             film_divider()
+
+        if "Director" in valid_collection.columns:
+          director_counts = split_multi_value_counts(valid_collection["Director"])
+          big_directors = director_counts[director_counts >= 5]
+          if not big_directors.empty:
+            st.markdown("**🎥 Director Milestones**")
+            for dname, dcount in big_directors.head(10).items():
+              st.markdown(f"🎬 {int(dcount)} **{dname}** films owned")
+
+      with sub_tab6:
+        st.subheader("🕓 Recently Watched")
+        if "Date Watched" not in valid_collection.columns:
+          st.info("Log some watch dates from the Collection tab and your recently watched films will show up here.")
+        else:
+          recent = valid_collection.copy()
+          recent["_last_watched"] = pd.to_datetime(recent["Date Watched"], errors="coerce")
+          recent = recent.dropna(subset=["_last_watched"]).sort_values(by="_last_watched", ascending=False).head(5)
+
+          if recent.empty:
+            st.info("No watch dates logged yet — mark a film watched with a date from the Collection tab.")
+          else:
+            for _, rrow in recent.iterrows():
+              title = rrow.get("Title", "Unknown")
+              year_str = safe_year(rrow.get("Year"))
+              watched_date = rrow["_last_watched"].strftime("%d/%m/%Y")
+
+              stars_line = f"Watched {watched_date}"
+              if "Rating (1-5)" in rrow.index:
+                stars = rating_stars_display(rrow.get("Rating (1-5)"))
+                if stars != "Not rated yet":
+                  stars_line += f" · <span class='stars-display'>{stars}</span>"
+
+              pcol1, pcol2 = st.columns([1, 3])
+              with pcol1:
+                poster_path = None
+                if tmdb_configured():
+                  poster_lookup = tmdb_lookup_cached(title, rrow.get("Year"))
+                  if poster_lookup:
+                    poster_path = poster_lookup.get("poster_path")
+                if poster_path:
+                  st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
+                else:
+                  st.caption("(no poster found)")
+              with pcol2:
+                st.markdown(f"🎬 **{title}** ({year_str})")
+                st.markdown(f"<span style='opacity:0.7; font-size:0.9em;'>{stars_line}</span>", unsafe_allow_html=True)
+
+              film_divider()
 
   # --- ON THIS DAY PAGE ---
   elif current_page == "On This Day":
-    st.subheader("📅 On This Day")
-    today = datetime.date.today()
-    st.caption(f"Films in your collection first released on {today.strftime('%B %d')}, across the years.")
+    with st.container(border=True):
+      st.subheader("📅 On This Day")
+      today = datetime.date.today()
+      st.caption(f"Films in your collection first released on {today.strftime('%B %d')}, across the years.")
 
-    if not tmdb_configured():
-      st.info(
-          "This needs a free TMDb API key in your app's secrets "
-          "(the same [tmdb] section used for auto-fill on Add) — "
-          "see the Extras tab caption for the general secrets pattern."
-      )
-    else:
-      with st.spinner("Checking release dates across your collection — cached after the first time, so this gets fast."):
-        titles_years = [
-            (row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
-            for _, row in valid_collection.iterrows()
-            if row.get("Title")
-        ]
-
-        def _check(title_year):
-          title, year = title_year
-          result = tmdb_release_date_cached(title, year)
-          if not result or not result.get("release_date"):
-            return None
-          try:
-            d = datetime.datetime.strptime(result["release_date"], "%Y-%m-%d").date()
-          except ValueError:
-            return None
-          if d.month == today.month and d.day == today.day:
-            return (title, d.year, result.get("poster_path"))
-          return None
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-          results = list(executor.map(_check, titles_years))
-
-      matches = sorted((r for r in results if r), key=lambda x: x[1])
-
-      if matches:
-        for title, rel_year, poster_path in matches:
-          pcol1, pcol2 = st.columns([1, 3])
-          with pcol1:
-            if poster_path:
-              st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
-          with pcol2:
-            st.markdown(f"🎬 **{title}**")
-            st.caption(f"Released {today.strftime('%B %d')}, {rel_year}")
+      if not tmdb_configured():
+        st.info(
+            "This needs a free TMDb API key in your app's secrets "
+            "(the same [tmdb] section used for auto-fill on Add) — "
+            "see the Extras tab caption for the general secrets pattern."
+        )
       else:
-        st.info("Nothing in your collection was first released on this date — check back tomorrow!")
+        with st.spinner("Checking release dates across your collection — cached after the first time, so this gets fast."):
+          titles_years = [
+              (row.get("Title", ""), row.get("Year") if pd.notna(row.get("Year")) else None)
+              for _, row in valid_collection.iterrows()
+              if row.get("Title")
+          ]
+
+          def _check(title_year):
+            title, year = title_year
+            result = tmdb_release_date_cached(title, year)
+            if not result or not result.get("release_date"):
+              return None
+            try:
+              d = datetime.datetime.strptime(result["release_date"], "%Y-%m-%d").date()
+            except ValueError:
+              return None
+            if d.month == today.month and d.day == today.day:
+              return (title, d.year, result.get("poster_path"))
+            return None
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            results = list(executor.map(_check, titles_years))
+
+        matches = sorted((r for r in results if r), key=lambda x: x[1])
+
+        if matches:
+          for title, rel_year, poster_path in matches:
+            pcol1, pcol2 = st.columns([1, 3])
+            with pcol1:
+              if poster_path:
+                st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
+            with pcol2:
+              st.markdown(f"🎬 **{title}**")
+              st.caption(f"Released {today.strftime('%B %d')}, {rel_year}")
+        else:
+          st.info("Nothing in your collection was first released on this date — check back tomorrow!")
 
 except FileNotFoundError:
   st.error(
