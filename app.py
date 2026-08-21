@@ -1,4 +1,5 @@
 import random
+import html as html_lib
 import streamlit.components.v1 as components
 import difflib
 import re
@@ -950,6 +951,121 @@ def age_badge_html(bbfc_rating):
   return f'<div class="age-badge {css_class}">{label}</div>'
 
 
+def bbfc_color_group(bbfc_rating):
+  """Maps a BBFC label to one of 3 color groups (teal/amber/red), used by
+  the poster carousel's badge styling. Returns None if unrecognized."""
+  if pd.isna(bbfc_rating) or str(bbfc_rating).strip() == "":
+    return None
+  lower = str(bbfc_rating).strip().lower()
+  if lower in ("u", "pg"):
+    return "u"
+  if lower in ("12", "12a"):
+    return "twelve"
+  if lower in ("15", "18"):
+    return "fifteen"
+  return None
+
+
+def render_poster_carousel(cards, height=270):
+  """A genuinely sliding poster carousel with real arrow buttons, built as
+  a self-contained HTML/CSS/JS document via components.html -- Streamlit's
+  native layout can't do smooth-scroll-on-click, only native touch-scroll,
+  so this is a Tier 1 'raw embedded HTML' component. Purely visual (no data
+  comes back into Python from clicks), which is exactly what this needs.
+  cards is a list of dicts: {'title', 'year', 'poster_url' (or None),
+  'badge_label' (or None), 'badge_class' (one of 'u'/'twelve'/'fifteen')}."""
+  card_html_parts = []
+  for c in cards:
+    title = html_lib.escape(str(c.get("title", "")))
+    year = html_lib.escape(str(c.get("year", "")))
+    poster_url = c.get("poster_url")
+    badge_label = c.get("badge_label")
+    badge_class = c.get("badge_class")
+
+    if poster_url:
+      img_html = f'<img src="{poster_url}" loading="lazy"/>'
+    else:
+      img_html = '<div class="poster-placeholder">🎬</div>'
+
+    badge_html = ""
+    if badge_label and badge_class:
+      badge_html = f'<div class="age-badge age-{badge_class}">{html_lib.escape(badge_label)}</div>'
+
+    card_html_parts.append(
+        f'<div class="poster-card">{img_html}{badge_html}'
+        f'<div class="poster-title">{title}</div>'
+        f'<div class="poster-year">{year}</div></div>'
+    )
+
+  cards_html = "".join(card_html_parts)
+
+  doc = f"""
+  <!DOCTYPE html>
+  <html><head><style>
+    * {{ box-sizing: border-box; }}
+    html, body {{
+      margin: 0; padding: 0;
+      background: transparent;
+      font-family: -apple-system, 'Manrope', sans-serif;
+      color: #EDECF5;
+      overflow: hidden;
+    }}
+    .carousel-wrap {{ display: flex; align-items: center; gap: 6px; }}
+    .carousel-track {{
+      display: flex;
+      overflow-x: auto;
+      scroll-behavior: smooth;
+      gap: 12px;
+      padding: 6px 4px 14px 4px;
+      scrollbar-width: none;
+      flex: 1 1 auto;
+    }}
+    .carousel-track::-webkit-scrollbar {{ display: none; }}
+    .poster-card {{ flex: 0 0 auto; width: 120px; position: relative; }}
+    .poster-card img {{
+      width: 120px; height: 178px; object-fit: cover;
+      border-radius: 10px; display: block;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }}
+    .poster-placeholder {{
+      width: 120px; height: 178px; border-radius: 10px;
+      background: rgba(108,92,232,0.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2em;
+    }}
+    .poster-title {{
+      font-size: 0.78em; font-weight: 700; margin-top: 6px; line-height: 1.2;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }}
+    .poster-year {{ font-size: 0.72em; opacity: 0.6; }}
+    .age-badge {{
+      position: absolute; bottom: 40px; right: 4px;
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7em; font-weight: 800; color: #0A0B14;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }}
+    .age-u {{ background: #2DD4BF; }}
+    .age-twelve {{ background: #F0A83B; }}
+    .age-fifteen {{ background: #E8546B; }}
+    .nav-btn {{
+      flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
+      background: rgba(108,92,232,0.25); border: 1px solid rgba(108,92,232,0.5);
+      color: #EDECF5; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 1.2em; user-select: none;
+    }}
+    .nav-btn:active {{ background: rgba(108,92,232,0.55); }}
+  </style></head>
+  <body>
+    <div class="carousel-wrap">
+      <div class="nav-btn" onclick="document.getElementById('track').scrollBy({{left:-260,behavior:'smooth'}})">‹</div>
+      <div class="carousel-track" id="track">{cards_html}</div>
+      <div class="nav-btn" onclick="document.getElementById('track').scrollBy({{left:260,behavior:'smooth'}})">›</div>
+    </div>
+  </body></html>
+  """
+  components.html(doc, height=height)
+
 def build_recent_activity(collection_df_in, wishlist_df_in, log_df_in, limit=5):
   """Combines Watched, Added-to-Collection, and Added-to-Wishlist events
   into one chronological feed. Wishlist adds on the same day get grouped
@@ -1888,41 +2004,36 @@ try:
     # --- Browse Your Collection: recently added, with posters + BBFC badge ---
     with st.container(border=True):
       st.markdown("### 🎬 Browse Your Collection")
-      st.caption("Recent additions to your library — swipe to see more.")
+      st.caption("Recent additions to your library — tap the arrows to slide through.")
 
       if "Film ID" in valid_collection.columns:
         recent_added = valid_collection.copy()
         recent_added["_id_num"] = recent_added["Film ID"].astype(str).str.extract(r"F?(\d+)").astype(float)
         recent_added = recent_added.sort_values(by="_id_num", ascending=False).head(6)
 
-        poster_cards_html = []
+        carousel_cards = []
         for _, prow in recent_added.iterrows():
           title = prow.get("Title", "")
           year_str = safe_year(prow.get("Year"))
-          badge_html = age_badge_html(prow.get("BBFC Rating")) if "BBFC Rating" in prow.index else ""
 
-          poster_path = None
+          poster_url = None
           if tmdb_configured():
             poster_lookup = tmdb_lookup_cached(title, prow.get("Year"))
-            if poster_lookup:
-              poster_path = poster_lookup.get("poster_path")
+            if poster_lookup and poster_lookup.get("poster_path"):
+              poster_url = f"https://image.tmdb.org/t/p/w300{poster_lookup['poster_path']}"
 
-          if poster_path:
-            img_html = f'<img src="https://image.tmdb.org/t/p/w300{poster_path}"/>'
-          else:
-            img_html = (
-                '<div style="width:120px;height:178px;border-radius:10px;'
-                'background:rgba(108,92,232,0.12);display:flex;align-items:center;'
-                'justify-content:center;font-size:2em;">🎬</div>'
-            )
+          bbfc_rating = prow.get("BBFC Rating") if "BBFC Rating" in prow.index else None
+          color_group = bbfc_color_group(bbfc_rating)
 
-          poster_cards_html.append(
-              f'<div class="poster-card">{img_html}{badge_html}'
-              f'<div class="poster-title">{title}</div>'
-              f'<div class="poster-year">{year_str}</div></div>'
-          )
+          carousel_cards.append({
+              "title": title,
+              "year": year_str,
+              "poster_url": poster_url,
+              "badge_label": str(bbfc_rating).strip() if color_group else None,
+              "badge_class": color_group,
+          })
 
-        st.markdown(f'<div class="poster-row">{"".join(poster_cards_html)}</div>', unsafe_allow_html=True)
+        render_poster_carousel(carousel_cards)
 
     film_divider()
 
