@@ -177,6 +177,47 @@ st.markdown(
         50%      { box-shadow: 0 4px 24px rgba(108, 92, 232, 0.3); border-color: var(--violet); }
     }
 
+    .pick-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.72em;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--amber);
+        opacity: 0.9;
+    }
+    .pick-title {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.9em;
+        letter-spacing: 0.03em;
+        margin: 2px 0 12px 0;
+        line-height: 1.05;
+    }
+    .pick-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        justify-content: center;
+        margin-bottom: 4px;
+    }
+    .pick-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 20px;
+        padding: 3px 11px;
+        font-size: 0.78em;
+        white-space: nowrap;
+    }
+    .pick-plot {
+        font-size: 0.85em;
+        margin-top: 12px;
+        opacity: 0.75;
+        font-style: italic;
+        text-align: left;
+    }
+
     /* Format badges — Blu-ray in violet (the laser color), 4K UHD in teal (the shimmer color) */
     .format-badge {
         display: inline-block;
@@ -1944,30 +1985,32 @@ try:
           p_watched = watched_display(p_watched_raw)
           p_rating_display = rating_stars_display(picked_movie.get("Rating (1-5)"))
           p_date_watched = format_date_watched(picked_movie.get("Date Watched")) if "Date Watched" in picked_movie.index else ""
-          p_last_watched_html = f"<br><b>Last watched:</b> {p_date_watched}" if p_date_watched else ""
 
           p_plot_html = ""
           p_trailer_key = None
           if tmdb_configured():
             tmdb_pick_data = tmdb_lookup_cached(p_title, picked_movie.get("Year"))
             if tmdb_pick_data and tmdb_pick_data.get("plot"):
-              p_plot_html = (
-                  f'<p style="font-size: 0.85em; margin-top: 10px; opacity: 0.75; '
-                  f'font-style: italic;">{tmdb_pick_data["plot"]}</p>'
-              )
+              p_plot_html = f'<p class="pick-plot">{html_lib.escape(tmdb_pick_data["plot"])}</p>'
             if tmdb_pick_data and tmdb_pick_data.get("id"):
               p_trailer_key = tmdb_trailer_cached(tmdb_pick_data["id"])
+
+          pick_chips = [p_format_badge]
+          if p_director and str(p_director) not in ("N/A", "nan"):
+            pick_chips.append(f'<span class="pick-chip">🎬 {html_lib.escape(str(p_director))}</span>')
+          if p_genre and str(p_genre) not in ("N/A", "nan"):
+            pick_chips.append(f'<span class="pick-chip">🎭 {html_lib.escape(str(p_genre))}</span>')
+          pick_chips.append(f'<span class="pick-chip">👁️ {p_watched}</span>')
+          pick_chips.append(f'<span class="pick-chip">⭐ <span class="stars-display">{p_rating_display}</span></span>')
+          if p_date_watched:
+            pick_chips.append(f'<span class="pick-chip">📅 {p_date_watched}</span>')
 
           st.markdown(
               f"""
                   <div class="winner-box">
-                      <h3 style="color: #F0A83B; margin-bottom: 2px;">🎉 Tonight's Pick:</h3>
-                      <h2 style="margin: 0px;">{p_title} ({p_year_str})</h2>
-                      <p style="font-size: 0.95em; margin-top: 8px; opacity: 0.85;">
-                          {p_format_badge} &nbsp;<b>Director:</b> {p_director}<br>
-                          <b>Genre:</b> {p_genre} | <b>Watched:</b> {p_watched}<br>
-                          <b>Rating:</b> <span class="stars-display">{p_rating_display}</span>{p_last_watched_html}
-                      </p>
+                      <div class="pick-label">🎉 Tonight's Pick</div>
+                      <div class="pick-title">{html_lib.escape(str(p_title))} ({p_year_str})</div>
+                      <div class="pick-chip-row">{"".join(pick_chips)}</div>
                       {p_plot_html}
                   </div>
                   """,
