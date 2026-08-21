@@ -437,6 +437,39 @@ st.markdown(
         margin-top: 24px;
     }
 
+    /* Quote-of-the-day footer strip on Home */
+    .quote-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px 20px;
+        border-radius: 14px;
+        background: linear-gradient(100deg, rgba(108,92,232,0.08), rgba(45,212,191,0.06));
+        border: 1px solid rgba(108,92,232,0.18);
+        margin-top: 8px;
+    }
+    .quote-footer .quote-reel {
+        font-size: 1.6em;
+        flex-shrink: 0;
+    }
+    .quote-footer .quote-text {
+        font-style: italic;
+        font-size: 0.88em;
+        opacity: 0.85;
+        line-height: 1.4;
+    }
+    .quote-footer .quote-attribution {
+        font-size: 0.78em;
+        opacity: 0.55;
+        margin-top: 4px;
+        font-style: normal;
+    }
+    .quote-footer .quote-popcorn {
+        font-size: 1.8em;
+        flex-shrink: 0;
+    }
+
     /* Tabs: quiet until selected, then lit up in violet with a teal underline */
     button[data-baseweb="tab"] {
         font-family: 'Manrope', sans-serif;
@@ -527,6 +560,37 @@ STAR_OPTIONS = ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
 # equally for filtering purposes.
 BBFC_RATINGS = ["", "U", "PG", "12A", "12", "15", "18"]
 BBFC_RANK = {"U": 0, "PG": 1, "12A": 2, "12": 2, "15": 3, "18": 4}
+
+# Short, properly-attributed film quotes for the Home page footer -- rotates
+# once per day (deterministic by date, not random per page load) rather
+# than changing every time the page refreshes.
+FILM_QUOTES = [
+    ("Here's looking at you, kid.", "Casablanca (1942)"),
+    ("May the Force be with you.", "Star Wars (1977)"),
+    ("I'll be back.", "The Terminator (1984)"),
+    ("You talking to me?", "Taxi Driver (1976)"),
+    ("Life is like a box of chocolates.", "Forrest Gump (1994)"),
+    ("Why so serious?", "The Dark Knight (2008)"),
+    ("To infinity and beyond!", "Toy Story (1995)"),
+    ("There's no place like home.", "The Wizard of Oz (1939)"),
+    ("Frankly, my dear, I don't give a damn.", "Gone with the Wind (1939)"),
+    ("You can't handle the truth!", "A Few Good Men (1992)"),
+    ("I see dead people.", "The Sixth Sense (1999)"),
+    ("Cinema is a matter of what's in the frame and what's out.", "Martin Scorsese"),
+    ("Film is a disease.", "Frank Capra"),
+    ("Movies are like a machine that generates empathy.", "Roger Ebert"),
+    ("Show me the money!", "Jerry Maguire (1996)"),
+    ("Houston, we have a problem.", "Apollo 13 (1995)"),
+    ("Just keep swimming.", "Finding Nemo (2003)"),
+    ("With great power comes great responsibility.", "Spider-Man (2002)"),
+    ("Roads? Where we're going, we don't need roads.", "Back to the Future (1985)"),
+    ("Bond. James Bond.", "Dr. No (1962)"),
+    ("Great Scott!", "Back to the Future (1985)"),
+    ("Nobody's perfect.", "Some Like It Hot (1959)"),
+    ("You had me at hello.", "Jerry Maguire (1996)"),
+    ("Keep your friends close, but your enemies closer.", "The Godfather Part II (1974)"),
+    ("I feel the need — the need for speed.", "Top Gun (1986)"),
+]
 
 
 
@@ -2164,6 +2228,20 @@ try:
           if st.button("📅  On This Day", key="qa_otd", use_container_width=True):
             st.session_state["current_page"] = "On This Day"
             st.rerun()
+
+    quote_index = datetime.date.today().toordinal() % len(FILM_QUOTES)
+    quote_text, quote_attribution = FILM_QUOTES[quote_index]
+    st.markdown(
+        f'<div class="quote-footer">'
+        f'<div class="quote-reel">🎞️</div>'
+        f'<div style="flex:1;">'
+        f'<div class="quote-text">"{html_lib.escape(quote_text)}"</div>'
+        f'<div class="quote-attribution">— {html_lib.escape(quote_attribution)}</div>'
+        f'</div>'
+        f'<div class="quote-popcorn">🍿</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
   # --- SEARCH PAGE ---
   elif current_page == "Search":
