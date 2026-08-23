@@ -2969,6 +2969,19 @@ try:
 
     with st.container(border=True):
       if not valid_wishlist.empty:
+        sort_option = st.selectbox(
+            "Sort by",
+            [
+                "Priority (5 → 1)",
+                "Priority (1 → 5)",
+                "Title (A-Z)",
+                "Title (Z-A)",
+                "Price (High to Low)",
+                "Price (Low to High)",
+            ],
+            key="wishlist_sort",
+        )
+
         # Deal alerts: cheapest found price has actually dropped to/below target
         has_price_cols = (
             "Target Price (£)" in valid_wishlist.columns
@@ -2992,9 +3005,28 @@ try:
               )
             film_divider()
 
-        for idx, row in valid_wishlist.assign(
-            _priority_sort=pd.to_numeric(valid_wishlist.get("Priority (1-5)"), errors="coerce").fillna(0)
-        ).sort_values(by="_priority_sort", ascending=False).iterrows():
+        sorted_wishlist = valid_wishlist.copy()
+        sorted_wishlist["_priority_sort"] = pd.to_numeric(
+            sorted_wishlist.get("Priority (1-5)"), errors="coerce"
+        ).fillna(0)
+        sorted_wishlist["_price_sort"] = pd.to_numeric(
+            sorted_wishlist.get("Target Price (£)"), errors="coerce"
+        )
+
+        if sort_option == "Priority (5 → 1)":
+          sorted_wishlist = sorted_wishlist.sort_values(by="_priority_sort", ascending=False)
+        elif sort_option == "Priority (1 → 5)":
+          sorted_wishlist = sorted_wishlist.sort_values(by="_priority_sort", ascending=True)
+        elif sort_option == "Title (A-Z)":
+          sorted_wishlist = sorted_wishlist.sort_values(by="Title", key=lambda s: s.str.lower(), ascending=True)
+        elif sort_option == "Title (Z-A)":
+          sorted_wishlist = sorted_wishlist.sort_values(by="Title", key=lambda s: s.str.lower(), ascending=False)
+        elif sort_option == "Price (High to Low)":
+          sorted_wishlist = sorted_wishlist.sort_values(by="_price_sort", ascending=False, na_position="last")
+        elif sort_option == "Price (Low to High)":
+          sorted_wishlist = sorted_wishlist.sort_values(by="_price_sort", ascending=True, na_position="last")
+
+        for idx, row in sorted_wishlist.iterrows():
           w_title = row.get("Title", "Untitled")
           w_priority = row.get("Priority (1-5)", "")
           w_target = row.get("Target Price (£)", None)
